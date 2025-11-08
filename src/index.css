@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ================================
+   🧠 Terminal-inspired Global Theme
+   ================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap');
+
+:root {
+  --bg-main: #0b0c0d;
+  --bg-panel: #111213;
+  --fg-main: #d0d2d1;
+  --fg-dim: #7a7d7d;
+  --accent: #00ffff;
+  --accent-soft: rgba(0, 255, 255, 0.08);
+  --border-color: rgba(255, 255, 255, 0.08);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background-color: var(--bg-main);
+  color: var(--fg-main);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.015em;
+}
+
+/* スクロールバーをエディタ風に */
+::-webkit-scrollbar {
+  width: 6px;
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #222;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+/* 選択範囲をシアンで */
+::selection {
+  background: rgba(0, 255, 255, 0.25);
+  color: #fff;
+}
+
+/* -------------------------------
+   🧩 Utility Enhancements
+   ------------------------------- */
+
+/* ノイズ感を出す微細なグラデ背景 */
+.bg-noise {
+  background: repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.015),
+      rgba(255, 255, 255, 0.015) 1px,
+      transparent 1px,
+      transparent 2px
+    ),
+    linear-gradient(to bottom right, #0b0c0d, #111);
+}
+
+/* カードやパネルに薄い縁を */
+.panel {
+  background-color: var(--bg-panel);
+  border: 0.5px solid var(--border-color);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+/* コード風ボタン */
+.btn-terminal {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--accent);
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  background-color: var(--accent-soft);
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+.btn-terminal:hover {
+  border-color: rgba(0, 255, 255, 0.6);
+  color: #aefcff;
+  background-color: rgba(0, 255, 255, 0.1);
+}
+
+/* 翻訳結果ボックスなどの出力風装飾 */
+.console-output {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(0, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: #cce8e8;
+  box-shadow: inset 0 0 6px rgba(0, 255, 255, 0.05);
+}
+
+/* 微光エフェクト */
+.glow {
+  text-shadow: 0 0 8px rgba(0, 255, 255, 0.4);
+}
+
+/* セクションタイトル */
+.section-header {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+  letter-spacing: 0.08em;
+}
+
+/* -------------------------------
+   ✨ Motion & Animation
+   ------------------------------- */
+
+/* 翻訳結果などのフェードイン */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fadeIn {
+  animation: fadeIn 0.25s ease-out forwards;
+}
+
+/* スレッドホバー時にほのかに光る */
+.thread-hover:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 0 12px rgba(0, 255, 255, 0.08);
+  transition: box-shadow 0.3s ease, background-color 0.2s ease;
+}
+
+/* スクロール時のわずかなグロー */
+.scroll-fade {
+  mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
+}
+
+/* リンクやアクション要素の軽いシアン光 */
+a,
+button {
+  transition: color 0.2s ease, text-shadow 0.2s ease;
+}
+a:hover,
+button:hover {
+  color: var(--accent);
+  text-shadow: 0 0 6px rgba(0, 255, 255, 0.3);
+}

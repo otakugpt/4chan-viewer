@@ -1,0 +1,51 @@
+{
+  "name": "4chan-viewer",
+  "version": "1.0.0",
+  "description": "4chan thread viewer with gallery and downloader (Electron + Vite + React + Tailwind)",
+  "main": "dist-electron/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "concurrently \"cross-env NODE_ENV=development vite\" \"wait-on http://localhost:5173 && npm run electron-dev\"",
+    "electron-dev": "tsc -p electron/tsconfig.json --outDir dist-electron --watch",
+    "start": "electron .",
+    "build": "vite build && tsc -p electron/tsconfig.json --outDir dist-electron",
+    "lint": "tsc --noEmit",
+
+    "electron": "npm run build && electron ./dist-electron/main.js"
+  },
+  "keywords": [
+    "electron",
+    "vite",
+    "react",
+    "tailwindcss",
+    "4chan"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "express": "^5.1.0",
+    "node-fetch": "^2.7.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.17",
+    "@tailwindcss/typography": "^0.5.19",
+    "@types/express": "^5.0.5",
+    "@types/node": "^22.19.0",
+    "@types/node-fetch": "^2.6.13",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "autoprefixer": "^10.4.21",
+    "electron": "^39.1.1",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.17",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2",
+    "wait-on": "^7.2.0"
+  }
+}
