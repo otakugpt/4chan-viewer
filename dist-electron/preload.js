@@ -38,7 +38,6 @@ const api = {
     onSaveComplete: (callback) => {
         const handler = () => {
             callback();
-            electron_1.ipcRenderer.removeListener("save-complete", handler);
         };
         electron_1.ipcRenderer.on("save-complete", handler);
         return () => {

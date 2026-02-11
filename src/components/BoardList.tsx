@@ -92,12 +92,12 @@ export const BoardList: React.FC<BoardListProps> = ({
               style={{ animationDelay: `${Math.min(index, 16) * 18}ms` }}
             >
               <div className="flex items-center justify-between gap-3">
-                <span className="meta font-semibold text-slate-100">/{b.board}/</span>
+                <span className="meta board-item-code font-semibold">/{b.board}/</span>
                 {selectedBoard === b.board && (
                   <span className="chip chip--small">active</span>
                 )}
               </div>
-              <p className="mt-1 text-sm text-slate-100">{b.title}</p>
+              <p className="board-item-title mt-1 text-sm">{b.title}</p>
             </button>
           ))}
 

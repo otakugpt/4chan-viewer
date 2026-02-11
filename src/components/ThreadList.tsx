@@ -19,6 +19,14 @@ interface ThreadListProps {
 const stripHtml = (html: string): string =>
   html.replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "");
 
+const createPreview = (comment: string): string => {
+  const normalized = comment.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > 200
+    ? `${normalized.slice(0, 200).trim()}...`
+    : normalized;
+};
+
 export const ThreadList: React.FC<ThreadListProps> = ({
   board,
   selectedThread,
@@ -81,8 +89,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           visibleThreads.map((thread, index) => {
             const thumb = thread.tim ? `${imgBase}/${board}/${thread.tim}s.jpg` : null;
             const comment = stripHtml(thread.com || "");
-            const summary =
-              comment.length > 220 ? `${comment.slice(0, 220).trim()}...` : comment;
+            const summary = createPreview(comment);
             const active = selectedThread === thread.no;
 
             return (
@@ -122,16 +129,20 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                       <span className="meta text-[11px] text-slate-400">No.{thread.no}</span>
                     </div>
 
-                    <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-slate-300">
+                    <p className="thread-summary mt-2 text-xs leading-relaxed text-slate-300">
                       {summary || "(no comment)"}
                     </p>
 
-                    <div className="mt-3 flex items-center justify-between gap-2">
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                       <div className="meta text-[11px] text-slate-400">
                         Replies {thread.replies ?? 0} / Images {thread.images ?? 0}
                       </div>
-                      <TranslateButton text={comment} stopPropagation />
                     </div>
+                    <TranslateButton
+                      text={comment}
+                      stopPropagation
+                      className="thread-list-translate mt-2"
+                    />
                   </div>
                 </div>
               </article>
