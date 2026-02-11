@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "outDir": "../dist-electron",
+    "rootDir": "./",
+    "strict": true,
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "typeRoots": [
+      "../src/types",        // ← ★追加：型定義ディレクトリを明示
+      "../node_modules/@types"
+    ]
+  },
+  "include": [
+    "./**/*.ts",
+    "../src/**/*.ts",
+    "../src/types/**/*.d.ts" // ← ★これも必ず入れる
+  ]
+}
