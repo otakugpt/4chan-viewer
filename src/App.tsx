@@ -10,6 +10,13 @@ interface SaveProgressData {
   filename: string;
 }
 
+interface SaveCompleteData {
+  total: number;
+  saved: number;
+  failed: number;
+  failedFiles: string[];
+}
+
 const EmptyPane: React.FC<{ title: string; description: string }> = ({
   title,
   description,
@@ -48,13 +55,21 @@ export const App: React.FC = () => {
     }
 
     if (window.electron?.onSaveComplete) {
-      removeComplete = window.electron.onSaveComplete(() => {
+      removeComplete = window.electron.onSaveComplete((data: SaveCompleteData) => {
         setProgress(100);
-        setStatus("Completed: all selected files saved.");
+
+        if (data.failed > 0) {
+          setStatus(
+            `Completed with errors: ${data.saved}/${data.total} saved, ${data.failed} failed.`
+          );
+        } else {
+          setStatus("Completed: all selected files saved.");
+        }
+
         setTimeout(() => {
           setProgress(0);
           setStatus("");
-        }, 3000);
+        }, 3200);
       });
     }
 

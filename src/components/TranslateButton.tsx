@@ -18,8 +18,10 @@ export const TranslateButton: React.FC<TranslateButtonProps> = ({
   const handleTranslate = async (event: React.MouseEvent<HTMLButtonElement>) => {
     if (stopPropagation) event.stopPropagation();
     if (loading || !text.trim()) return;
+
     setLoading(true);
     setError(null);
+    setTranslated(null);
 
     try {
       const response = await fetch("http://localhost:4040/translate", {
@@ -28,12 +30,20 @@ export const TranslateButton: React.FC<TranslateButtonProps> = ({
         body: JSON.stringify({ text }),
       });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      setTranslated(data.translatedText);
-    } catch (err: any) {
+      const data = (await response.json()) as {
+        translatedText?: string;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+
+      setTranslated(data.translatedText || "");
+    } catch (err) {
       console.error(err);
-      setError("翻訳に失敗しました");
+      const message = err instanceof Error ? err.message : "翻訳に失敗しました";
+      setError(message);
     } finally {
       setLoading(false);
     }

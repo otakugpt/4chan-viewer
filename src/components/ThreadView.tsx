@@ -23,22 +23,17 @@ interface SaveProgressData {
   filename: string;
 }
 
+interface SaveCompleteData {
+  total: number;
+  saved: number;
+  failed: number;
+  failedFiles: string[];
+}
+
 type ViewMode = "thread" | "gallery";
 
 const stripHtml = (html: string): string =>
   html.replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "");
-
-const formatCommentHtml = (comment: string): string =>
-  comment
-    .replace(/<br\s*\/?>/g, "<br/>")
-    .replace(
-      /&gt;&gt;(\d+)/g,
-      `<span class="text-sky-300 font-semibold hover:text-cyan-200 transition-colors">&gt;&gt;$1</span>`
-    )
-    .replace(
-      /<a href="([^"]+)">/g,
-      `<a href="$1" target="_blank" rel="noopener noreferrer" class="text-emerald-300 underline decoration-emerald-400/50 hover:text-cyan-200">`
-    );
 
 export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
   board,
@@ -92,13 +87,25 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
         );
       }
     );
-    const removeComplete = window.electron.onSaveComplete(() => {
+    const removeComplete = window.electron.onSaveComplete((data: SaveCompleteData) => {
       setPanelProgress(100);
-      setPanelStatus("保存が完了しました。");
+      if (data.failed > 0) {
+        const preview = data.failedFiles.slice(0, 2).join(", ");
+        const suffix =
+          preview.length > 0
+            ? ` (失敗例: ${preview}${data.failedFiles.length > 2 ? ", ..." : ""})`
+            : "";
+        setPanelStatus(
+          `保存完了: ${data.saved}/${data.total} 成功, ${data.failed} 失敗${suffix}`
+        );
+      } else {
+        setPanelStatus("保存が完了しました。");
+      }
+
       setTimeout(() => {
         setPanelProgress(0);
         setPanelStatus("");
-      }, 2400);
+      }, 2600);
     });
 
     return () => {
@@ -154,30 +161,50 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
   };
 
   const loadOlderThread = async () => {
+    if (loadingOlder || noMoreOlder) return;
+
     try {
       setLoadingOlder(true);
+
       const archiveResponse = await fetch(`${apiBase}/${board}/archive.json`);
       if (!archiveResponse.ok) throw new Error(`HTTP ${archiveResponse.status}`);
 
-      const archive: number[] = await archiveResponse.json();
-      const lastLoadedId = loadedThreadIds[loadedThreadIds.length - 1];
-      const idx = archive.indexOf(lastLoadedId);
+      const archiveRaw: unknown = await archiveResponse.json();
+      if (!Array.isArray(archiveRaw)) {
+        throw new Error("Invalid archive data");
+      }
 
-      if (idx === -1 || idx === archive.length - 1) {
+      const archive = archiveRaw
+        .filter((id): id is number => typeof id === "number")
+        .sort((a, b) => b - a);
+      const loadedSet = new Set(loadedThreadIds);
+      const referenceId = loadedThreadIds[loadedThreadIds.length - 1] ?? threadId;
+      const nextOldId = archive.find(
+        (id) => id < referenceId && !loadedSet.has(id)
+      );
+
+      if (!nextOldId) {
         setNoMoreOlder(true);
         return;
       }
 
-      const nextOldId = archive[idx + 1];
       const olderResponse = await fetch(`${apiBase}/${board}/thread/${nextOldId}.json`);
       if (!olderResponse.ok) throw new Error(`HTTP ${olderResponse.status}`);
 
-      const olderData = await olderResponse.json();
-      const olderPosts: Post[] = olderData.posts || [];
+      const olderData = (await olderResponse.json()) as { posts?: Post[] };
+      const olderPosts = Array.isArray(olderData.posts) ? olderData.posts : [];
+
+      if (!olderPosts.length) {
+        setNoMoreOlder(true);
+        return;
+      }
+
       setPosts((prev) => [...prev, ...olderPosts]);
       setLoadedThreadIds((prev) => [...prev, nextOldId]);
     } catch (fetchError) {
       console.error("Failed to load older thread:", fetchError);
+      setPanelStatus("過去スレの読み込みに失敗しました。");
+      setTimeout(() => setPanelStatus(""), 2200);
     } finally {
       setLoadingOlder(false);
     }
@@ -319,12 +346,9 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
                   </div>
                 )}
 
-                <div
-                  className="post-body mt-3 text-sm leading-relaxed text-slate-200"
-                  dangerouslySetInnerHTML={{
-                    __html: formatCommentHtml(post.com || ""),
-                  }}
-                />
+                <p className="post-body mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-200">
+                  {plainText || "(no comment)"}
+                </p>
 
                 {post.com && <TranslateButton text={plainText} className="mt-3" />}
               </article>

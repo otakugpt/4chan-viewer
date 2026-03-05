@@ -10,26 +10,114 @@ const https_1 = __importDefault(require("https"));
 const http_1 = __importDefault(require("http"));
 const express_1 = __importDefault(require("express"));
 const node_fetch_1 = __importDefault(require("node-fetch"));
-// =============================================
-// 🌐 共通設定
-// =============================================
+const PROXY_PORT = 4040;
+const FETCH_INTERVAL_MS = 1200;
+const DOWNLOAD_DELAY_MS = 500;
+const DOWNLOAD_RETRY_COUNT = 3;
+const ALLOWED_PROXY_HOSTS = new Set(["i.4cdn.org"]);
 const agent = new https_1.default.Agent({ keepAlive: true, maxSockets: 5 });
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
-// =============================================
-// 🌀 Local Proxy Server（レートリミット回避）
-// =============================================
+function normalizeDownloadUrl(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        if (parsed.protocol !== "https:")
+            return null;
+        if (!ALLOWED_PROXY_HOSTS.has(parsed.hostname))
+            return null;
+        return parsed.toString();
+    }
+    catch {
+        return null;
+    }
+}
+function safeFilenameFromTarget(target, index) {
+    const explicit = target.filename?.trim();
+    if (explicit)
+        return path_1.default.basename(explicit);
+    try {
+        const parsed = new URL(target.url);
+        const fromPath = path_1.default.basename(parsed.pathname);
+        if (fromPath)
+            return fromPath;
+    }
+    catch {
+        // Ignore parse errors and fallback to deterministic name.
+    }
+    return `image-${index + 1}.dat`;
+}
+async function fileExists(filePath) {
+    try {
+        await fs_1.default.promises.access(filePath);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+async function resolveUniqueFilePath(filePath) {
+    if (!(await fileExists(filePath)))
+        return filePath;
+    const parsed = path_1.default.parse(filePath);
+    let suffix = 1;
+    let candidate = filePath;
+    while (await fileExists(candidate)) {
+        candidate = path_1.default.join(parsed.dir, `${parsed.name}-${suffix}${parsed.ext}`);
+        suffix += 1;
+    }
+    return candidate;
+}
+async function removeFileIfExists(filePath) {
+    try {
+        await fs_1.default.promises.unlink(filePath);
+    }
+    catch (error) {
+        const typed = error;
+        if (typed.code !== "ENOENT") {
+            console.warn(`[Cleanup] Failed to delete partial file: ${filePath}`, typed);
+        }
+    }
+}
+async function downloadViaProxy(proxyUrl, filePath) {
+    await new Promise((resolve, reject) => {
+        const file = fs_1.default.createWriteStream(filePath);
+        const req = http_1.default.get(proxyUrl, (res) => {
+            if (res.statusCode !== 200) {
+                res.resume();
+                file.destroy();
+                reject(new Error(`HTTP ${res.statusCode ?? "unknown"}`));
+                return;
+            }
+            res.pipe(file);
+            file.on("finish", () => {
+                file.close(() => resolve());
+            });
+        });
+        req.on("error", (error) => {
+            file.destroy();
+            reject(error);
+        });
+        file.on("error", (error) => {
+            req.destroy();
+            reject(error);
+        });
+    });
+}
 const proxyApp = (0, express_1.default)();
 let lastFetch = 0;
+let proxyServer = null;
 proxyApp.get("/proxy", async (req, res) => {
-    const url = req.query.url;
-    if (!url)
-        return res.status(400).send("missing url");
+    const rawUrl = typeof req.query.url === "string" ? req.query.url : "";
+    const url = normalizeDownloadUrl(rawUrl);
+    if (!url) {
+        res.status(400).json({ error: "Invalid or unsupported url" });
+        return;
+    }
     const now = Date.now();
     const diff = now - lastFetch;
-    if (diff < 2000)
-        await sleep(2000 - diff); // 2秒間隔
+    if (diff < FETCH_INTERVAL_MS)
+        await sleep(FETCH_INTERVAL_MS - diff);
     lastFetch = Date.now();
     try {
         const response = await (0, node_fetch_1.default)(url, {
@@ -40,36 +128,50 @@ proxyApp.get("/proxy", async (req, res) => {
             agent,
         });
         if (!response.ok) {
-            console.error(`[Proxy] ${url} → HTTP ${response.status}`);
+            console.error(`[Proxy] ${url} -> HTTP ${response.status}`);
             res.status(response.status).send();
             return;
         }
+        const contentType = response.headers.get("content-type");
+        if (contentType) {
+            res.setHeader("Content-Type", contentType);
+        }
         if (!response.body) {
             console.error(`[Proxy] Empty body from ${url}`);
-            res.status(500).send("Empty body from fetch");
+            res.status(502).json({ error: "Empty body from upstream" });
             return;
         }
         response.body.pipe(res);
     }
-    catch (e) {
-        console.error("[Proxy error]", e);
-        res.status(500).send();
+    catch (error) {
+        console.error("[Proxy error]", error);
+        if (!res.headersSent) {
+            res.status(502).json({ error: "Proxy fetch failed" });
+        }
     }
 });
-proxyApp.listen(4040, () => console.log("🌀 Local proxy running on port 4040"));
-// =============================================
-// 翻訳
-// =============================================
-const DEEPL_API_KEY = process.env.DEEPL_API_KEY || "e35be5a4-632a-4761-a6a1-8db3644667d3:fx";
-proxyApp.post("/translate", express_1.default.json(), async (req, res) => {
-    const { text } = req.body;
-    if (!text)
-        return res.status(400).json({ error: "Missing text" });
+const DEEPL_API_KEY = process.env.DEEPL_API_KEY?.trim();
+proxyApp.post("/translate", express_1.default.json({ limit: "32kb" }), async (req, res) => {
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (!text) {
+        res.status(400).json({ error: "Missing text" });
+        return;
+    }
+    if (text.length > 4000) {
+        res.status(413).json({ error: "Text too long" });
+        return;
+    }
+    if (!DEEPL_API_KEY) {
+        res
+            .status(503)
+            .json({ error: "Translation unavailable: DEEPL_API_KEY is not set" });
+        return;
+    }
     try {
         const response = await (0, node_fetch_1.default)("https://api-free.deepl.com/v2/translate", {
             method: "POST",
             headers: {
-                "Authorization": `DeepL-Auth-Key ${DEEPL_API_KEY}`,
+                Authorization: `DeepL-Auth-Key ${DEEPL_API_KEY}`,
                 "Content-Type": "application/x-www-form-urlencoded",
             },
             body: new URLSearchParams({
@@ -77,18 +179,22 @@ proxyApp.post("/translate", express_1.default.json(), async (req, res) => {
                 target_lang: "JA",
             }),
         });
-        const data = await response.json();
-        res.json({ translatedText: data.translations?.[0]?.text || "" });
+        const data = (await response.json());
+        if (!response.ok) {
+            const message = typeof data.message === "string" ? data.message : "Translation failed";
+            res.status(response.status).json({ error: message });
+            return;
+        }
+        res.json({ translatedText: data.translations?.[0]?.text ?? "" });
     }
-    catch (err) {
-        console.error("[DeepL Error]", err);
+    catch (error) {
+        console.error("[DeepL Error]", error);
         res.status(500).json({ error: "Translation failed" });
     }
 });
-// =============================================
-// 🪟 Electron Main Window
-// =============================================
 function createWindow() {
+    const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+    const isDev = Boolean(devServerUrl) || !electron_1.app.isPackaged;
     const win = new electron_1.BrowserWindow({
         width: 1400,
         height: 900,
@@ -96,27 +202,51 @@ function createWindow() {
             preload: path_1.default.join(__dirname, "preload.js"),
             contextIsolation: true,
             nodeIntegration: false,
-            sandbox: false,
+            sandbox: true,
         },
     });
-    // 🚀 絶対パスで dist/index.html を正確に指定
-    // __dirname は dist-electron/ を指すため ../dist に戻る
-    const indexPath = path_1.default.resolve(__dirname, "../dist/index.html");
-    console.log("[LOAD]", indexPath);
-    // ファイルが存在するか確認してからロード
-    if (fs_1.default.existsSync(indexPath)) {
-        win.loadFile(indexPath).catch((err) => {
-            console.error("[Electron] Failed to load index.html:", err);
+    win.webContents.setWindowOpenHandler(({ url }) => {
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            void electron_1.shell.openExternal(url);
+        }
+        return { action: "deny" };
+    });
+    if (devServerUrl) {
+        win.loadURL(devServerUrl).catch((error) => {
+            console.error("[Electron] Failed to load dev server URL:", error);
         });
     }
     else {
-        console.error("[Electron] index.html not found at:", indexPath);
-        win.loadURL("data:text/html,<h2 style='color:red;'>❌ index.html not found</h2>");
+        const indexPath = path_1.default.resolve(__dirname, "../dist/index.html");
+        if (fs_1.default.existsSync(indexPath)) {
+            win.loadFile(indexPath).catch((error) => {
+                console.error("[Electron] Failed to load index.html:", error);
+            });
+        }
+        else {
+            console.error("[Electron] index.html not found at:", indexPath);
+            win.loadURL("data:text/html,<h2 style='color:red;'>index.html not found</h2>");
+        }
     }
-    // ✅ DevTools 自動表示（デバッグ用）
-    win.webContents.openDevTools({ mode: "detach" });
+    if (isDev) {
+        win.webContents.openDevTools({ mode: "detach" });
+    }
+}
+function startProxyServer() {
+    if (proxyServer)
+        return;
+    proxyServer = proxyApp.listen(PROXY_PORT, () => {
+        console.log(`Local proxy running on port ${PROXY_PORT}`);
+    });
+}
+function stopProxyServer() {
+    if (!proxyServer)
+        return;
+    proxyServer.close();
+    proxyServer = null;
 }
 electron_1.app.whenReady().then(() => {
+    startProxyServer();
     createWindow();
     electron_1.app.on("activate", () => {
         if (electron_1.BrowserWindow.getAllWindows().length === 0)
@@ -127,9 +257,9 @@ electron_1.app.on("window-all-closed", () => {
     if (process.platform !== "darwin")
         electron_1.app.quit();
 });
-// =============================================
-// 📦 画像保存ロジック（Proxy経由, リトライ付き）
-// =============================================
+electron_1.app.on("before-quit", () => {
+    stopProxyServer();
+});
 electron_1.ipcMain.on("save-images", async (event, list) => {
     if (!Array.isArray(list) || list.length === 0)
         return;
@@ -140,63 +270,62 @@ electron_1.ipcMain.on("save-images", async (event, list) => {
     if (canceled || filePaths.length === 0)
         return;
     const saveDir = filePaths[0];
-    console.log(`📁 保存先: ${saveDir}`);
-    console.log(`📦 保存対象: ${list.length}件`);
-    for (let i = 0; i < list.length; i++) {
+    let savedCount = 0;
+    const failedFiles = [];
+    for (let i = 0; i < list.length; i += 1) {
         const item = list[i];
-        const filename = item.filename || path_1.default.basename(item.url);
-        const filePath = path_1.default.join(saveDir, filename);
-        const proxyUrl = `http://localhost:4040/proxy?url=${encodeURIComponent(item.url)}`;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        const filename = safeFilenameFromTarget(item, i);
+        const normalizedUrl = normalizeDownloadUrl(item.url);
+        const progressBase = {
+            current: i + 1,
+            total: list.length,
+            percent: Math.round(((i + 1) / list.length) * 100),
+            filename,
+        };
+        if (!normalizedUrl) {
+            failedFiles.push(filename);
+            event.sender.send("save-progress", progressBase);
+            continue;
+        }
+        const proxyUrl = `http://localhost:${PROXY_PORT}/proxy?url=${encodeURIComponent(normalizedUrl)}`;
+        const initialFilePath = path_1.default.join(saveDir, filename);
+        const filePath = await resolveUniqueFilePath(initialFilePath);
+        const savedFilename = path_1.default.basename(filePath);
+        let completed = false;
+        for (let attempt = 1; attempt <= DOWNLOAD_RETRY_COUNT; attempt += 1) {
             try {
-                console.log(`📡 [${i + 1}/${list.length}] DL開始: ${item.url}`);
-                await new Promise((resolve, reject) => {
-                    const file = fs_1.default.createWriteStream(filePath);
-                    const req = http_1.default.get(proxyUrl, (res) => {
-                        console.log(`📡 STATUS ${res.statusCode} (${item.url})`);
-                        if (res.statusCode === 429) {
-                            res.resume();
-                            reject(new Error("429"));
-                            return;
-                        }
-                        if (res.statusCode !== 200) {
-                            res.resume();
-                            reject(new Error(`HTTP ${res.statusCode}`));
-                            return;
-                        }
-                        let downloadedBytes = 0;
-                        res.on("data", (chunk) => (downloadedBytes += chunk.length));
-                        res.pipe(file);
-                        file.on("finish", () => {
-                            file.close(() => {
-                                console.log(`✅ 完了: ${filename} (${downloadedBytes} bytes)`);
-                                // ✅ 進捗イベント送信
-                                event.sender.send("save-progress", {
-                                    current: i + 1,
-                                    total: list.length,
-                                    percent: Math.round(((i + 1) / list.length) * 100),
-                                    filename,
-                                });
-                                resolve();
-                            });
-                        });
-                        file.on("error", reject);
-                    });
-                    req.on("error", reject);
-                    req.end();
-                });
-                await sleep(800); // 軽いdelay（サーバ負荷対策）
-                break; // 成功したら次へ
+                await downloadViaProxy(proxyUrl, filePath);
+                completed = true;
+                break;
             }
-            catch (err) {
-                console.error(`⚠️ [Retry ${attempt}] ${item.url}: ${err.message}`);
-                if (attempt < 3)
-                    await sleep(3000 * attempt);
-                else
-                    console.error(`❌ 永続失敗: ${item.url}`);
+            catch (error) {
+                await removeFileIfExists(filePath);
+                const typed = error;
+                console.error(`[Retry ${attempt}] ${normalizedUrl}: ${typed.message || error}`);
+                if (attempt < DOWNLOAD_RETRY_COUNT) {
+                    await sleep(1200 * attempt);
+                }
             }
         }
+        if (completed) {
+            savedCount += 1;
+        }
+        else {
+            failedFiles.push(savedFilename);
+        }
+        event.sender.send("save-progress", {
+            ...progressBase,
+            filename: savedFilename,
+        });
+        if (i < list.length - 1) {
+            await sleep(DOWNLOAD_DELAY_MS);
+        }
     }
-    console.log("🎉 全ファイル保存完了");
-    event.sender.send("save-complete");
+    const payload = {
+        total: list.length,
+        saved: savedCount,
+        failed: list.length - savedCount,
+        failedFiles,
+    };
+    event.sender.send("save-complete", payload);
 });
