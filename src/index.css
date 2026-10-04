@@ -1,8 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 :root {
   --bg-base: #04060d;
@@ -574,4 +572,29 @@ body {
   .status-bar {
     margin-bottom: 8px;
   }
+}
+
+.board-row { position: relative; }
+.board-row .board-item { padding-right: 64px; }
+.favorite-board { position: absolute; right: 8px; top: 10px; }
+.favorite-strip { display: flex; gap: 8px; overflow-x: auto; flex-shrink: 0; padding: 2px; }
+.workspace-pane { min-width: 0; }
+.topbar { padding: 12px 16px; }
+.panel-header > .flex > .flex { flex-wrap: wrap; }
+.gallery-link { width: 100%; cursor: zoom-in; }
+.post-image-link { cursor: zoom-in; }
+.post-thumb { aspect-ratio: 4 / 3; object-fit: contain; }
+.ui-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.media-viewer { position: fixed; inset: 0; margin: auto; width: min(1100px, 96vw); max-width: 96vw; max-height: 94dvh; padding: 16px; border: 1px solid var(--border); border-radius: 16px; color: var(--text-primary); background: #080d19; }
+.media-viewer::backdrop { background: rgba(0, 0, 0, .86); }
+.viewer-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.viewer-content { display: flex; align-items: center; justify-content: center; height: min(72dvh, 800px); padding: 12px 0; }
+.viewer-content img, .viewer-content video { max-width: 100%; max-height: 100%; object-fit: contain; }
+@media (max-width: 1080px) {
+  .app-shell { height: auto; }
+  .workspace-grid { flex: none; grid-template-rows: 260px 360px minmax(500px, 75vh); }
+  .topbar { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

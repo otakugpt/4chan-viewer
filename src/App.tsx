@@ -1,21 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { BoardList } from "./components/BoardList";
 import { ThreadList } from "./components/ThreadList";
 import { ThreadView } from "./components/ThreadView";
 
-interface SaveProgressData {
-  current: number;
-  total: number;
-  percent: number;
-  filename: string;
-}
-
-interface SaveCompleteData {
-  total: number;
-  saved: number;
-  failed: number;
-  failedFiles: string[];
-}
+import { useSave } from "./components/SaveProvider";
+import { getLibrary, useLibrary, rememberSelection, clearLibrary, toggleFavorite } from "./lib/library";
 
 const EmptyPane: React.FC<{ title: string; description: string }> = ({
   title,
@@ -33,51 +22,11 @@ const EmptyPane: React.FC<{ title: string; description: string }> = ({
 );
 
 export const App: React.FC = () => {
-  const [board, setBoard] = useState<string | null>(null);
-  const [thread, setThread] = useState<number | null>(null);
-
-  const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState("");
-
-  useEffect(() => {
-    let removeProgress: (() => void) | undefined;
-    let removeComplete: (() => void) | undefined;
-
-    if (window.electron?.onProgress) {
-      removeProgress = window.electron.onProgress(
-        (data: SaveProgressData) => {
-          setProgress(data.percent || 0);
-          setStatus(
-            `Saving ${data.current}/${data.total}: ${data.filename || "file"}`
-          );
-        }
-      );
-    }
-
-    if (window.electron?.onSaveComplete) {
-      removeComplete = window.electron.onSaveComplete((data: SaveCompleteData) => {
-        setProgress(100);
-
-        if (data.failed > 0) {
-          setStatus(
-            `Completed with errors: ${data.saved}/${data.total} saved, ${data.failed} failed.`
-          );
-        } else {
-          setStatus("Completed: all selected files saved.");
-        }
-
-        setTimeout(() => {
-          setProgress(0);
-          setStatus("");
-        }, 3200);
-      });
-    }
-
-    return () => {
-      removeProgress?.();
-      removeComplete?.();
-    };
-  }, []);
+  const [board, setBoard] = useState<string | null>(() => getLibrary().last?.board ?? null);
+  const [thread, setThread] = useState<number | null>(() => getLibrary().last?.thread ?? null);
+  const library = useLibrary();
+  const { progress, status, busy, failed, save } = useSave();
+  const select = (b: string, t: number | null) => { setBoard(b); setThread(t); rememberSelection(b, t); };
 
   return (
     <div className="app-shell">
@@ -93,26 +42,25 @@ export const App: React.FC = () => {
           <span className="chip meta">
             {thread ? `No.${thread}` : "No thread"}
           </span>
-          <span className="chip meta">v1.0.0</span>
+          <button className="ui-btn" onClick={() => { if (window.confirm("お気に入りと閲覧履歴を削除しますか？")) { clearLibrary(); setBoard(null); setThread(null); } }}>閲覧データを消去</button>
         </div>
       </header>
 
+      {library.threads.length > 0 && <nav className="favorite-strip" aria-label="お気に入りスレッド">{library.threads.map(id => <span key={id} className="flex gap-1"><button className="ui-btn" key={id} onClick={() => { const [b, t] = id.split("/"); select(b, Number(t)); }}>/{id}</button><button className="ui-btn" aria-label={id + " をお気に入りから削除"} onClick={() => toggleFavorite("threads", id)}>解除</button></span>)}</nav>}
       <main className="workspace-grid">
         <section className="workspace-pane">
           <BoardList
             selectedBoard={board}
-            onSelect={(b) => {
-              setBoard(b);
-              setThread(null);
-            }}
+            onSelect={(b) => select(b, null)}
           />
         </section>
 
         <section className="workspace-pane">
           {board ? (
             <ThreadList
+              key={board}
               board={board}
-              onSelect={setThread}
+              onSelect={(t) => select(board, t)}
               selectedThread={thread}
             />
           ) : (
@@ -125,7 +73,7 @@ export const App: React.FC = () => {
 
         <section className="workspace-pane">
           {board && thread ? (
-            <ThreadView board={board} threadId={thread} />
+            <ThreadView key={board + "/" + thread} board={board} threadId={thread} />
           ) : (
             <EmptyPane
               title="Select a Thread"
@@ -145,7 +93,8 @@ export const App: React.FC = () => {
               {Math.round(progress)}%
             </div>
           </div>
-          <div className="mt-1 text-sm text-slate-200">{status}</div>
+          <div className="mt-1 text-sm text-slate-200" role="status">{status}</div>
+          {failed.length > 0 && <button className="ui-btn mt-2" disabled={busy} onClick={() => save(failed)}>失敗した {failed.length} 件だけ再試行</button>}
           <div className="progress-track mt-3">
             <div
               className="progress-fill"

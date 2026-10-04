@@ -156,7 +156,8 @@ test('preload exposes scoped operations and never forwards Electron events', asy
   load('preload', { electron: { ipcRenderer, contextBridge: { exposeInMainWorld: (_key, value) => { api = value; } } } });
   assert.deepEqual(await api.translate('hello'), ['translate-text', 'hello']);
   assert.equal(api.invoke, undefined);
-  for (const [method, channel] of [['onProgress', 'save-progress'], ['onSaveComplete', 'save-complete']]) {
+  assert.deepEqual(await api.saveImages([]), ['save-images', []]);
+  for (const [method, channel] of [['onProgress', 'save-progress']]) {
     let args;
     const remove = api[method]((...values) => { args = values; });
     ipcRenderer.emit(channel, { sender: 'privileged' }, { total: 1 });
@@ -164,4 +165,48 @@ test('preload exposes scoped operations and never forwards Electron events', asy
     remove();
     assert.equal(ipcRenderer.listenerCount(channel), 0);
   }
+});
+
+test('save IPC returns cancellation, prevents overlap, releases locks and identifies failed targets', async () => {
+  const handlers = {};
+  let win, resolveDialog;
+  let mode = 'pending';
+  const calls = [];
+  const electron = {
+    app: { isPackaged: true, whenReady: () => Promise.resolve(), on() {} },
+    BrowserWindow: class extends EventEmitter {
+      constructor() {
+        super(); win = this; this.webContents = new EventEmitter();
+        Object.assign(this.webContents, { id: 11, mainFrame: {}, setWindowOpenHandler() {}, isDestroyed: () => false, send() {} });
+      }
+      async loadFile(file) { this.webContents.mainFrame.url = require('node:url').pathToFileURL(file).href; }
+    },
+    ipcMain: { handle: (c, fn) => { handlers[c] = fn; } },
+    dialog: { async showOpenDialog() {
+      if (mode === 'pending') return new Promise(resolve => { resolveDialog = resolve; });
+      if (mode === 'error') throw new Error('private filesystem details');
+      return { canceled: false, filePaths: [os.tmpdir()] };
+    } }, shell: {},
+  };
+  load('main', { electron, fs: { ...fs, existsSync: () => true, promises: { access: async () => { throw new Error('absent'); } } }, './services': {
+    ...services, downloadImage: async url => { calls.push(url); if (url.endsWith('456.jpg')) throw new Error('network'); },
+  } });
+  await Promise.resolve();
+  const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
+  const save = handlers['save-images'];
+  const good = { url: 'https://i.4cdn.org/g/123.jpg' }, bad = { url: 'https://i.4cdn.org/g/456.jpg' };
+  const pending = save(event, [good]);
+  assert.equal((await save(event, [good])).status, 'busy');
+  resolveDialog({ canceled: true, filePaths: [] });
+  assert.equal((await pending).status, 'cancelled');
+  mode = 'error';
+  const error = await save(event, [good]);
+  assert.equal(error.status, 'error');
+  assert.equal(error.error.includes('private'), false);
+  mode = 'save';
+  const result = await save(event, [good, bad]);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.saved, 1);
+  assert.deepEqual(result.failedTargets, [bad]);
+  assert.equal(calls.length, 4);
 });

@@ -1,4 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import { useSave } from "./SaveProvider";
+import { MediaViewer, MediaItem } from "./MediaViewer";
+import { plainText as stripHtml } from "../lib/text";
+import { getLibrary, getClearEpoch, rememberReading, toggleFavorite, useLibrary } from "../lib/library";
 import { TranslateButton } from "./TranslateButton";
 
 interface Post {
@@ -9,31 +13,7 @@ interface Post {
   ext?: string;
 }
 
-interface MediaItem {
-  postNo: number;
-  full: string;
-  thumb: string;
-  filename: string;
-}
-
-interface SaveProgressData {
-  current: number;
-  total: number;
-  percent: number;
-  filename: string;
-}
-
-interface SaveCompleteData {
-  total: number;
-  saved: number;
-  failed: number;
-  failedFiles: string[];
-}
-
 type ViewMode = "thread" | "gallery";
-
-const stripHtml = (html: string): string =>
-  html.replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "");
 
 export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
   board,
@@ -46,73 +26,78 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
   const [loadingOlder, setLoadingOlder] = useState<boolean>(false);
   const [noMoreOlder, setNoMoreOlder] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<ViewMode>("thread");
-  const [panelStatus, setPanelStatus] = useState("");
-  const [panelProgress, setPanelProgress] = useState(0);
+  const [localStatus, setPanelStatus] = useState("");
+  const { busy, progress: panelProgress, status: saveStatus, save: saveMedia } = useSave();
+  const panelStatus = localStatus || saveStatus;
+  const [viewer, setViewer] = useState<number | null>(null);
+  const requests = useRef<AbortController | null>(null);
+  const olderBusy = useRef(false);
+  const scrollPane = useRef<HTMLDivElement>(null);
+  const library = useLibrary();
+  const readingKey = board + "/" + threadId;
+  const initialReading = useRef(getLibrary().reads[readingKey]);
+  const lastScroll = useRef(initialReading.current?.scroll ?? 0);
+
 
   const isElectron = window.location.protocol === "file:";
   const apiBase = isElectron ? "https://a.4cdn.org" : "/api";
   const imgBase = isElectron ? "https://i.4cdn.org" : "/img";
 
   useEffect(() => {
+    const controller = new AbortController();
+    requests.current = controller;
+    setPosts([]);
+    setLoadedThreadIds([]);
+    setLoadingOlder(false);
+    olderBusy.current = false;
     setLoading(true);
     setError(null);
     setNoMoreOlder(false);
     setViewMode("thread");
 
-    fetch(`${apiBase}/${board}/thread/${threadId}.json`)
+    fetch(`${apiBase}/${board}/thread/${threadId}.json`, { signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
       .then((data) => {
-        if (!data.posts) throw new Error("Invalid thread data");
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(data.posts)) throw new Error("Invalid thread data");
         setPosts(data.posts);
         setLoadedThreadIds([threadId]);
       })
       .catch((err: Error) => {
+        if (controller.signal.aborted) return;
         console.error("Failed to load thread:", err);
         setError(err.message);
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
   }, [apiBase, board, threadId]);
 
   useEffect(() => {
-    if (!window.electron?.onProgress || !window.electron?.onSaveComplete) return;
-
-    const removeProgress = window.electron.onProgress(
-      (data: SaveProgressData) => {
-        setPanelProgress(data.percent ?? 0);
-        setPanelStatus(
-          `Saving ${data.current}/${data.total}: ${data.filename || "file"}`
-        );
-      }
-    );
-    const removeComplete = window.electron.onSaveComplete((data: SaveCompleteData) => {
-      setPanelProgress(100);
-      if (data.failed > 0) {
-        const preview = data.failedFiles.slice(0, 2).join(", ");
-        const suffix =
-          preview.length > 0
-            ? ` (失敗例: ${preview}${data.failedFiles.length > 2 ? ", ..." : ""})`
-            : "";
-        setPanelStatus(
-          `保存完了: ${data.saved}/${data.total} 成功, ${data.failed} 失敗${suffix}`
-        );
-      } else {
-        setPanelStatus("保存が完了しました。");
-      }
-
-      setTimeout(() => {
-        setPanelProgress(0);
-        setPanelStatus("");
-      }, 2600);
-    });
-
-    return () => {
-      removeProgress?.();
-      removeComplete?.();
+    const pane = scrollPane.current;
+    if (!pane || loading || error || viewMode !== "thread") return;
+    pane.scrollTop = lastScroll.current;
+    const epoch = getClearEpoch();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastPost = initialReading.current?.post ?? 0;
+    const sample = () => {
+      const bottom = pane.getBoundingClientRect().bottom;
+      const visible = [...pane.querySelectorAll<HTMLElement>("[data-post]")].filter(el => el.getBoundingClientRect().top < bottom);
+      lastPost = Number(visible[visible.length - 1]?.dataset.post ?? 0);
+      lastScroll.current = pane.scrollTop;
     };
-  }, []);
+    const record = () => {
+      if (epoch === getClearEpoch()) rememberReading(readingKey, lastPost, lastScroll.current);
+    };
+    const scroll = () => { sample(); clearTimeout(timer); timer = setTimeout(record, 250); };
+    const unload = () => record();
+    sample(); record();
+    pane.addEventListener("scroll", scroll);
+    window.addEventListener("beforeunload", unload);
+    return () => { clearTimeout(timer); record(); pane.removeEventListener("scroll", scroll); window.removeEventListener("beforeunload", unload); };
+  }, [loading, error, readingKey, viewMode]);
 
   const mediaList = useMemo<MediaItem[]>(
     () =>
@@ -129,18 +114,6 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
         }),
     [posts, board, imgBase]
   );
-
-  const saveMedia = (items: { url: string; filename?: string }[]) => {
-    if (!items.length) return;
-    if (!window.electron?.saveImages) {
-      setPanelStatus("画像保存は Electron での実行時のみ利用できます。");
-      setTimeout(() => setPanelStatus(""), 2200);
-      return;
-    }
-    setPanelStatus("保存先フォルダを選択してください...");
-    setPanelProgress(0);
-    window.electron.saveImages(items);
-  };
 
   const downloadAllMedia = () => {
     if (!mediaList.length) return;
@@ -161,15 +134,19 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
   };
 
   const loadOlderThread = async () => {
-    if (loadingOlder || noMoreOlder) return;
+    if (olderBusy.current || noMoreOlder) return;
+    const signal = requests.current?.signal;
+    if (!signal || signal.aborted) return;
+    olderBusy.current = true;
 
     try {
       setLoadingOlder(true);
 
-      const archiveResponse = await fetch(`${apiBase}/${board}/archive.json`);
+      const archiveResponse = await fetch(`${apiBase}/${board}/archive.json`, { signal });
       if (!archiveResponse.ok) throw new Error(`HTTP ${archiveResponse.status}`);
 
       const archiveRaw: unknown = await archiveResponse.json();
+      if (signal.aborted) return;
       if (!Array.isArray(archiveRaw)) {
         throw new Error("Invalid archive data");
       }
@@ -188,10 +165,11 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
         return;
       }
 
-      const olderResponse = await fetch(`${apiBase}/${board}/thread/${nextOldId}.json`);
+      const olderResponse = await fetch(`${apiBase}/${board}/thread/${nextOldId}.json`, { signal });
       if (!olderResponse.ok) throw new Error(`HTTP ${olderResponse.status}`);
 
       const olderData = (await olderResponse.json()) as { posts?: Post[] };
+      if (signal.aborted) return;
       const olderPosts = Array.isArray(olderData.posts) ? olderData.posts : [];
 
       if (!olderPosts.length) {
@@ -202,11 +180,12 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
       setPosts((prev) => [...prev, ...olderPosts]);
       setLoadedThreadIds((prev) => [...prev, nextOldId]);
     } catch (fetchError) {
+      if (signal.aborted) return;
       console.error("Failed to load older thread:", fetchError);
       setPanelStatus("過去スレの読み込みに失敗しました。");
-      setTimeout(() => setPanelStatus(""), 2200);
+
     } finally {
-      setLoadingOlder(false);
+      if (!signal.aborted) { olderBusy.current = false; setLoadingOlder(false); }
     }
   };
 
@@ -243,6 +222,7 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button className="ui-btn" aria-pressed={library.threads.includes(readingKey)} onClick={() => toggleFavorite("threads", readingKey)}>{library.threads.includes(readingKey) ? "お気に入り解除" : "お気に入り"}</button>
             <button
               type="button"
               onClick={() => setViewMode("thread")}
@@ -260,10 +240,10 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
             <button
               type="button"
               onClick={downloadAllMedia}
-              disabled={!mediaList.length}
+              disabled={busy || !mediaList.length}
               className="ui-btn ui-btn--primary"
             >
-              Save all
+              {busy ? "保存中…" : "Save all"}
             </button>
           </div>
         </div>
@@ -282,7 +262,7 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
         )}
       </div>
 
-      <div className="list-scroll smooth-scroll">
+      <div ref={scrollPane} className="list-scroll">
         {viewMode === "thread" ? (
           posts.map((post, index) => {
             const hasImage = Boolean(post.tim && post.ext);
@@ -294,22 +274,23 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
             return (
               <article
                 key={post.no}
+                data-post={post.no}
                 className="post-card animate-enter"
                 style={{ animationDelay: `${Math.min(index, 24) * 12}ms` }}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-semibold text-slate-100">
-                    {post.name || "Anonymous"}
+                    {stripHtml(post.name || "Anonymous")}
                   </span>
-                  <span className="meta text-[11px] text-slate-400">No.{post.no}</span>
+                  <span className="meta text-[11px] text-slate-400">{post.no <= (initialReading.current?.post ?? 0) ? "既読 · " : ""}No.{post.no}</span>
                 </div>
 
                 {imageUrl && (
                   <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
-                    <a
-                      href={imageUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      type="button"
+                      aria-label={"投稿 " + post.no + " の画像を拡大"}
+                      onClick={() => setViewer(mediaList.findIndex(m => m.postNo === post.no))}
                       className="post-image-link"
                     >
                       <img
@@ -317,7 +298,7 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
                         alt={`post-${post.no}`}
                         className="post-thumb"
                       />
-                    </a>
+                    </button>
 
                     <div className="flex items-center gap-2">
                       <button
@@ -330,6 +311,7 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
                             filename,
                           })
                         }
+                        disabled={busy}
                         className="ui-btn ui-btn--primary ui-btn--small"
                       >
                         Save image
@@ -362,25 +344,27 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
                 className="gallery-card animate-enter"
                 style={{ animationDelay: `${Math.min(index, 24) * 14}ms` }}
               >
-                <a
-                  href={media.full}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  aria-label={"投稿 " + media.postNo + " の画像を拡大"}
+                  onClick={() => setViewer(index)}
                   className="gallery-link"
                 >
                   <img
                     src={media.thumb}
                     alt={`gallery-${media.postNo}`}
                     onError={(e) => {
-                      (e.target as HTMLImageElement).src = media.full;
+                      e.currentTarget.onerror = null;
+                      if (!media.filename.endsWith(".webm") && e.currentTarget.src !== new URL(media.full, location.href).href) e.currentTarget.src = media.full;
                     }}
                     className="gallery-thumb"
                   />
-                </a>
+                </button>
                 <div className="gallery-meta">
                   <span className="meta text-[11px] text-slate-300">No.{media.postNo}</span>
                   <button
                     type="button"
+                    disabled={busy}
                     onClick={() => downloadSingleMedia(media)}
                     className="ui-btn ui-btn--primary ui-btn--small"
                   >
@@ -397,6 +381,7 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
         )}
       </div>
 
+      {viewer !== null && viewer >= 0 && <MediaViewer items={mediaList} initialIndex={viewer} onClose={() => setViewer(null)} />}
       {!noMoreOlder && (
         <div className="panel-footer">
           <button

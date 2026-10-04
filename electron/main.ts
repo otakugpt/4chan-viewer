@@ -18,12 +18,7 @@ function trustedSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEven
 
 type ImageTarget = { url: string; filename?: string };
 
-interface SaveCompletePayload {
-  total: number;
-  saved: number;
-  failed: number;
-  failedFiles: string[];
-}
+
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -138,82 +133,45 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-ipcMain.on("save-images", async (event, list: ImageTarget[]) => {
-  if (!trustedSender(event) || !Array.isArray(list) || list.length === 0 || list.length > 2000) return;
-  if (!list.every(item => item && normalizeDownloadUrl(item.url) &&
-      (item.filename === undefined || (typeof item.filename === "string" &&
-       /^\d+\.(jpg|jpeg|png|gif|webm)$/i.test(item.filename))))) return;
-
-  const { canceled, filePaths } = await dialog.showOpenDialog({
-    title: "保存先フォルダを選択",
-    properties: ["openDirectory"],
-  });
-  if (canceled || filePaths.length === 0) return;
-
-  const saveDir = filePaths[0];
-  let savedCount = 0;
-  const failedFiles: string[] = [];
-
-  for (let i = 0; i < list.length; i += 1) {
-    const item = list[i];
-    const filename = safeFilenameFromTarget(item, i);
-    const normalizedUrl = normalizeDownloadUrl(item.url);
-    const progressBase = {
-      current: i + 1,
-      total: list.length,
-      percent: Math.round(((i + 1) / list.length) * 100),
-      filename,
-    };
-
-    if (!normalizedUrl) {
-      failedFiles.push(filename);
-      event.sender.send("save-progress", progressBase);
-      continue;
-    }
-
-    const initialFilePath = path.join(saveDir, filename);
-    const filePath = await resolveUniqueFilePath(initialFilePath);
-    const savedFilename = path.basename(filePath);
-    let completed = false;
-
-    for (let attempt = 1; attempt <= DOWNLOAD_RETRY_COUNT; attempt += 1) {
-      try {
-        await downloadImage(normalizedUrl, filePath);
-        completed = true;
-        break;
-      } catch (error) {
-        const typed = error as Error;
-        console.error(
-          `[Retry ${attempt}] ${normalizedUrl}: ${typed.message || error}`
-        );
-        if (attempt < DOWNLOAD_RETRY_COUNT) {
-          await sleep(1200 * attempt);
-        }
-      }
-    }
-
-    if (completed) {
-      savedCount += 1;
-    } else {
-      failedFiles.push(savedFilename);
-    }
-
-    event.sender.send("save-progress", {
-      ...progressBase,
-      filename: savedFilename,
-    });
-
-    if (i < list.length - 1) {
-      await sleep(DOWNLOAD_DELAY_MS);
-    }
+let saving = false;
+ipcMain.handle("save-images", async (event, input: unknown): Promise<SaveResult> => {
+  const failure = (error: string): SaveResult => ({ status: "error", total: 0, saved: 0, failedTargets: [], error });
+  if (!trustedSender(event)) return failure("Unauthorized request");
+  if (saving) return { status: "busy", total: 0, saved: 0, failedTargets: [] };
+  if (!Array.isArray(input) || input.length === 0 || input.length > 2000 ||
+      !input.every(item => item && normalizeDownloadUrl(item.url) &&
+        (item.filename === undefined || (typeof item.filename === "string" && /^\d+\.(jpg|jpeg|png|gif|webm)$/i.test(item.filename))))) {
+    return failure("保存対象が不正です（1〜2000件まで）。");
   }
-
-  const payload: SaveCompletePayload = {
-    total: list.length,
-    saved: savedCount,
-    failed: list.length - savedCount,
-    failedFiles,
-  };
-
-  event.sender.send("save-complete", payload);
+  const list: ImageTarget[] = input;
+  const failedTargets: ImageTarget[] = [];
+  let saved = 0;
+  let processed = 0;
+  saving = true;
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({ title: "保存先フォルダを選択", properties: ["openDirectory"] });
+    if (canceled || !filePaths.length) return { status: "cancelled", total: list.length, saved: 0, failedTargets: [] };
+    for (let i = 0; i < list.length; i++) {
+      if (event.sender.isDestroyed()) { failedTargets.push(...list.slice(i)); processed = list.length; break; }
+      const item = list[i];
+      const filename = safeFilenameFromTarget(item, i);
+      let complete = false;
+      try {
+        const filePath = await resolveUniqueFilePath(path.join(filePaths[0], filename));
+        for (let attempt = 1; attempt <= DOWNLOAD_RETRY_COUNT; attempt++) {
+          try { await downloadImage(item.url, filePath); complete = true; break; }
+          catch { if (attempt < DOWNLOAD_RETRY_COUNT) await sleep(1200 * attempt); }
+        }
+      } catch { /* A single file failure must not discard the rest of the batch. */ }
+      if (complete) saved++; else failedTargets.push(item);
+      processed = i + 1;
+      if (!event.sender.isDestroyed()) event.sender.send("save-progress", {
+        current: i + 1, total: list.length, percent: Math.round((i + 1) / list.length * 100), filename,
+      });
+      if (i < list.length - 1) await sleep(DOWNLOAD_DELAY_MS);
+    }
+    return { status: "complete", total: list.length, saved, failedTargets };
+  } catch {
+    return { status: "error", total: list.length, saved, failedTargets: [...failedTargets, ...list.slice(processed)], error: "保存処理に失敗しました。保存先の権限やアプリの状態を確認してください。" };
+  } finally { saving = false; }
 });

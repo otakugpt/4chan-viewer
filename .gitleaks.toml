@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "deepl-api-key"
+description = "DeepL API Free credential"
+regex = '''(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:fx'''
+
+[[allowlists]]
+description = "Dependencies and local generated artifacts"
+paths = ['''(^|/|\\)(node_modules|dist|dist-electron|\.tools|\.test-artifacts|\.git)(/|\\)''']

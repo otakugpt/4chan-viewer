@@ -6,3 +6,5 @@ dist/
 .npm-cache/
 dist-electron/
 .DS_Store
+.tools/
+.test-artifacts/

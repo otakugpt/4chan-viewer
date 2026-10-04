@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 
+import { useLibrary, toggleFavorite } from "../lib/library";
+
 interface Board {
   board: string;
   title: string;
@@ -14,6 +16,7 @@ export const BoardList: React.FC<BoardListProps> = ({
   onSelect,
   selectedBoard,
 }) => {
+  const library = useLibrary();
   const [boards, setBoards] = useState<Board[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -23,36 +26,41 @@ export const BoardList: React.FC<BoardListProps> = ({
   const apiBase = isElectron ? "https://a.4cdn.org" : "/api";
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
 
-    fetch(`${apiBase}/boards.json`)
+    fetch(`${apiBase}/boards.json`, { signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
       .then((data) => {
+        if (controller.signal.aborted) return;
         if (!data.boards || !Array.isArray(data.boards)) {
           throw new Error("Invalid response structure");
         }
         setBoards(data.boards);
       })
       .catch((err) => {
+        if (controller.signal.aborted) return;
         console.error("Failed to load boards:", err);
         setError(err.message);
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
   }, []);
 
   const filteredBoards = useMemo(() => {
+    const sorted = [...boards].sort((a, b) => Number(library.boards.includes(b.board)) - Number(library.boards.includes(a.board)));
     const keyword = query.trim().toLowerCase();
-    if (!keyword) return boards;
+    if (!keyword) return sorted;
 
-    return boards.filter((b) => {
+    return sorted.filter((b) => {
       const token = `${b.board} ${b.title}`.toLowerCase();
       return token.includes(keyword);
     });
-  }, [boards, query]);
+  }, [boards, query, library.boards]);
 
   return (
     <div className="panel-surface pane-flex">
@@ -65,6 +73,7 @@ export const BoardList: React.FC<BoardListProps> = ({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Filter boards..."
+          aria-label="板を検索"
           className="panel-search"
         />
       </div>
@@ -82,9 +91,8 @@ export const BoardList: React.FC<BoardListProps> = ({
         {!loading &&
           !error &&
           filteredBoards.map((b, index) => (
-            <button
+            <div key={b.board} className="board-row"><button
               type="button"
-              key={b.board}
               onClick={() => onSelect(b.board)}
               className={`board-item animate-enter ${
                 selectedBoard === b.board ? "board-item--active" : ""
@@ -98,7 +106,7 @@ export const BoardList: React.FC<BoardListProps> = ({
                 )}
               </div>
               <p className="board-item-title mt-1 text-sm">{b.title}</p>
-            </button>
+            </button><button className="ui-btn favorite-board" aria-label={"/" + b.board + "/ をお気に入りに"} aria-pressed={library.boards.includes(b.board)} onClick={() => toggleFavorite("boards", b.board)}>{library.boards.includes(b.board) ? "解除" : "登録"}</button></div>
           ))}
 
         {!loading && !error && filteredBoards.length === 0 && (
