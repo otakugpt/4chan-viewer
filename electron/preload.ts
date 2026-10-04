@@ -19,10 +19,11 @@ interface SaveCompleteData {
   failedFiles: string[];
 }
 
-type ProgressCallback = (event: IpcRendererEvent, data: ProgressData) => void;
+type ProgressCallback = (data: ProgressData) => void;
 type CompleteCallback = (data: SaveCompleteData) => void;
 
 const api = {
+  translate: (text: string): Promise<{ translatedText: string } | { error: string }> => ipcRenderer.invoke("translate-text", text),
   saveImages: (list: ImageItem[]): void => {
     if (!Array.isArray(list) || list.length === 0) {
       console.warn("[electron.saveImages] Invalid argument or empty list");
@@ -32,8 +33,8 @@ const api = {
   },
 
   onProgress: (callback: ProgressCallback): (() => void) => {
-    const handler = (event: IpcRendererEvent, data: ProgressData) => {
-      callback(event, data);
+    const handler = (_event: IpcRendererEvent, data: ProgressData) => {
+      callback(data);
     };
     ipcRenderer.on("save-progress", handler);
     return () => {

@@ -16,8 +16,9 @@ declare global {
   }
 
   interface ElectronAPI {
+    translate: (text: string) => Promise<{ translatedText: string } | { error: string }>;
     onProgress: (
-      listener: (event: unknown, data: SaveProgressData) => void
+      listener: (data: SaveProgressData) => void
     ) => () => void;
 
     onSaveComplete: (listener: (data: SaveCompleteData) => void) => () => void;

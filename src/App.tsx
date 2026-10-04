@@ -45,7 +45,7 @@ export const App: React.FC = () => {
 
     if (window.electron?.onProgress) {
       removeProgress = window.electron.onProgress(
-        (_event: unknown, data: SaveProgressData) => {
+        (data: SaveProgressData) => {
           setProgress(data.percent || 0);
           setStatus(
             `Saving ${data.current}/${data.total}: ${data.filename || "file"}`

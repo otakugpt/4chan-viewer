@@ -80,7 +80,7 @@ export const ThreadView: React.FC<{ board: string; threadId: number }> = ({
     if (!window.electron?.onProgress || !window.electron?.onSaveComplete) return;
 
     const removeProgress = window.electron.onProgress(
-      (_event: unknown, data: SaveProgressData) => {
+      (data: SaveProgressData) => {
         setPanelProgress(data.percent ?? 0);
         setPanelStatus(
           `Saving ${data.current}/${data.total}: ${data.filename || "file"}`

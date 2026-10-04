@@ -24,22 +24,10 @@ export const TranslateButton: React.FC<TranslateButtonProps> = ({
     setTranslated(null);
 
     try {
-      const response = await fetch("http://localhost:4040/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-
-      const data = (await response.json()) as {
-        translatedText?: string;
-        error?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(data.error || `HTTP ${response.status}`);
-      }
-
-      setTranslated(data.translatedText || "");
+      if (!window.electron?.translate) throw new Error("翻訳は Electron アプリで利用できます。");
+      const data = await window.electron.translate(text);
+      if ("error" in data) throw new Error(data.error);
+      setTranslated(data.translatedText);
     } catch (err) {
       console.error(err);
       const message = err instanceof Error ? err.message : "翻訳に失敗しました";
