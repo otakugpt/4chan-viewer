@@ -3,16 +3,10 @@ import { plainText } from "../lib/text";
 import { useLibrary, toggleFavorite } from "../lib/library";
 import { TranslateButton } from "./TranslateButton";
 
-interface Thread {
-  no: number;
-  com?: string;
-  sub?: string;
-  replies?: number;
-  images?: number;
-  tim?: number;
-}
+import { providers } from "../lib/providers";
 
 interface ThreadListProps {
+  source: BoardSource;
   board: string;
   selectedThread: number | null;
   onSelect: (threadNo: number) => void;
@@ -27,18 +21,19 @@ const createPreview = (comment: string): string => {
 };
 
 export const ThreadList: React.FC<ThreadListProps> = ({
+  source,
   board,
   selectedThread,
   onSelect,
 }) => {
-  const library = useLibrary();
-  const [threads, setThreads] = useState<Thread[]>([]);
+  const library = useLibrary(source);
+  const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  const isElectron = window.location.protocol === "file:";
-  const apiBase = isElectron ? "https://a.4cdn.org" : "/api";
-  const imgBase = isElectron ? "https://i.4cdn.org" : "/img";
+  const provider = providers[source];
+  const [query, setQuery] = useState("");
+  const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -46,15 +41,10 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     setError(null);
     setThreads([]);
 
-    fetch(`${apiBase}/${board}/catalog.json`, { signal: controller.signal })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
+    provider.threads(board, controller.signal)
       .then((pages) => {
         if (controller.signal.aborted) return;
-        const allThreads = pages.flatMap((page: any) => page.threads || []);
-        setThreads(allThreads);
+        setThreads(pages);
       })
       .catch((err: Error) => {
         if (controller.signal.aborted) return;
@@ -63,9 +53,9 @@ export const ThreadList: React.FC<ThreadListProps> = ({
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [apiBase, board]);
+  }, [provider, board, refresh]);
 
-  const visibleThreads = useMemo(() => threads.slice(0, 50), [threads]);
+  const visibleThreads = useMemo(() => threads.filter(t => plainText(t.sub ?? "").toLowerCase().includes(query.toLowerCase())).slice(0, source === "4chan" ? 50 : 500), [threads, query, source]);
 
   return (
     <div className="panel-surface pane-flex">
@@ -75,10 +65,11 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           <span className="meta text-xs text-slate-400">{visibleThreads.length}</span>
         </div>
         <p className="mt-1 text-xs text-slate-400">
-          catalog の先頭 50 件を表示しています。
+          {source === "4chan" ? "catalog の先頭 50 件を表示しています。" : "検索結果の先頭500件を表示。更新間隔は最低30秒です。"}
         </p>
       </div>
 
+      <div className="px-3 py-2 flex gap-2"><input className="panel-search" aria-label="スレッド検索" placeholder="スレッド検索" value={query} onChange={e => setQuery(e.target.value)} /><button className="ui-btn" disabled={loading} onClick={() => setRefresh(n => n + 1)}>更新</button></div>
       <div className="list-scroll smooth-scroll">
         {loading && (
           <div className="load-state">
@@ -92,7 +83,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         {!loading &&
           !error &&
           visibleThreads.map((thread, index) => {
-            const thumb = thread.tim ? `${imgBase}/${board}/${thread.tim}s.jpg` : null;
+            const thumb = provider.thumbnail(board, thread);
             const comment = plainText(thread.com || "");
             const summary = createPreview(comment);
             const active = selectedThread === thread.no;
@@ -115,7 +106,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="meta text-xs">{library.reads[board + "/" + thread.no] ? "既読" : "未読"}</span>
-                  <button className="ui-btn ui-btn--small" aria-pressed={library.threads.includes(board + "/" + thread.no)} onClick={e => { e.stopPropagation(); toggleFavorite("threads", board + "/" + thread.no); }}>{library.threads.includes(board + "/" + thread.no) ? "お気に入り解除" : "お気に入り"}</button>
+                  <button className="ui-btn ui-btn--small" aria-pressed={library.threads.includes(board + "/" + thread.no)} onClick={e => { e.stopPropagation(); toggleFavorite("threads", board + "/" + thread.no, source); }}>{library.threads.includes(board + "/" + thread.no) ? "お気に入り解除" : "お気に入り"}</button>
                 </div>
                 <div className="flex gap-3">
                   {thumb ? (
@@ -145,14 +136,14 @@ export const ThreadList: React.FC<ThreadListProps> = ({
 
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                       <div className="meta text-[11px] text-slate-400">
-                        Replies {thread.replies ?? 0} / Images {thread.images ?? 0}
+                        レス {thread.replies ?? 0}{source === "4chan" ? " / Images " + (thread.images ?? 0) : ""}
                       </div>
                     </div>
-                    <TranslateButton
+                    {provider.capabilities.translation && <TranslateButton
                       text={comment}
                       stopPropagation
                       className="thread-list-translate mt-2"
-                    />
+                    />}
                   </div>
                 </div>
               </article>

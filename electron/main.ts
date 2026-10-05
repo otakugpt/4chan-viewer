@@ -3,6 +3,8 @@ import path from "path";
 import fs from "fs";
 import { pathToFileURL } from "node:url";
 import { downloadImage, isTrustedDocument, normalizeDownloadUrl, translateText } from "./services";
+import { fiveRequest } from "./five";
+import { normalizeFiveImage, imageFilename, readFiveImage, downloadFiveImage } from "./five-media";
 
 const DOWNLOAD_DELAY_MS = 500;
 const DOWNLOAD_RETRY_COUNT = 3;
@@ -16,7 +18,13 @@ function trustedSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEven
     isTrustedDocument(frame.url, expected));
 }
 
-type ImageTarget = { url: string; filename?: string };
+ipcMain.handle("five-request", (event, request: unknown) => trustedSender(event)
+  ? fiveRequest(request) : { error: "Unauthorized request" });
+ipcMain.handle("five-image", async (event, url: unknown): Promise<RemoteImageResult> => {
+  if (!trustedSender(event)) return { error: "Unauthorized request" };
+  try { return await readFiveImage(url); }
+  catch { return { error: "画像を取得できません。対応ホスト・形式・8MB以内の画像か確認してください。" }; }
+});
 
 
 
@@ -77,6 +85,7 @@ function createWindow() {
     ? "http://localhost:5173/" : undefined;
 
   const win = new BrowserWindow({
+    title: "RIFT",
     width: 1400,
     height: 900,
     webPreferences: {
@@ -139,11 +148,15 @@ ipcMain.handle("save-images", async (event, input: unknown): Promise<SaveResult>
   if (!trustedSender(event)) return failure("Unauthorized request");
   if (saving) return { status: "busy", total: 0, saved: 0, failedTargets: [] };
   if (!Array.isArray(input) || input.length === 0 || input.length > 2000 ||
-      !input.every(item => item && normalizeDownloadUrl(item.url) &&
-        (item.filename === undefined || (typeof item.filename === "string" && /^\d+\.(jpg|jpeg|png|gif|webm)$/i.test(item.filename))))) {
+      !input.every(item => item && (item.source === "5ch"
+        ? normalizeFiveImage(item.url) && (item.filename === undefined || item.filename === imageFilename(item.url))
+        : (item.source === undefined || item.source === "4chan") && normalizeDownloadUrl(item.url) &&
+          (item.filename === undefined || (typeof item.filename === "string" && /^\d+\.(jpg|jpeg|png|gif|webm)$/i.test(item.filename)))))) {
     return failure("保存対象が不正です（1〜2000件まで）。");
   }
-  const list: ImageTarget[] = input;
+  const list: ImageTarget[] = input.map(item => item.source === "5ch"
+    ? { source: "5ch", url: normalizeFiveImage(item.url)!, filename: imageFilename(item.url) }
+    : { url: item.url, ...(item.filename === undefined ? {} : { filename: item.filename }) });
   const failedTargets: ImageTarget[] = [];
   let saved = 0;
   let processed = 0;
@@ -159,7 +172,11 @@ ipcMain.handle("save-images", async (event, input: unknown): Promise<SaveResult>
       try {
         const filePath = await resolveUniqueFilePath(path.join(filePaths[0], filename));
         for (let attempt = 1; attempt <= DOWNLOAD_RETRY_COUNT; attempt++) {
-          try { await downloadImage(item.url, filePath); complete = true; break; }
+          try {
+            if (item.source === "5ch") await downloadFiveImage(item.url, filePath);
+            else await downloadImage(item.url, filePath);
+            complete = true; break;
+          }
           catch { if (attempt < DOWNLOAD_RETRY_COUNT) await sleep(1200 * attempt); }
         }
       } catch { /* A single file failure must not discard the rest of the batch. */ }

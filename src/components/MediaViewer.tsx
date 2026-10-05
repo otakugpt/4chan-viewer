@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-export interface MediaItem { postNo: number; full: string; thumb: string; filename: string }
-export function MediaViewer({ items, initialIndex, onClose }: { items: MediaItem[]; initialIndex: number; onClose: () => void }) {
+import { RemoteImage } from "./RemoteImage";
+export interface MediaItem { postNo: number; full: string; thumb: string; filename: string; remote?: boolean }
+export function MediaViewer({ items, initialIndex, onClose, onJump }: { items: MediaItem[]; initialIndex: number; onClose: () => void; onJump?: (no: number) => void }) {
   const [index, setIndex] = useState(initialIndex);
   const [failed, setFailed] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -23,13 +24,14 @@ export function MediaViewer({ items, initialIndex, onClose }: { items: MediaItem
       <button className="ui-btn" onClick={onClose} autoFocus>閉じる (Esc)</button>
     </div>
     <div className="viewer-content">
-      {failed ? <p role="alert">読み込めませんでした。<button className="ui-btn" onClick={() => setFailed(false)}>再試行</button></p> : /\.webm$/i.test(item.filename)
+      {item.remote ? <RemoteImage url={item.full} alt={`投稿 ${item.postNo}`} /> : failed ? <p role="alert">読み込めませんでした。<button className="ui-btn" onClick={() => setFailed(false)}>再試行</button></p> : /\.webm$/i.test(item.filename)
         ? <video key={item.full} src={item.full} controls onError={() => setFailed(true)} />
         : <img key={item.full} src={item.full} alt={`投稿 ${item.postNo}`} onError={() => setFailed(true)} />}
     </div>
     <div className="viewer-toolbar">
       <button className="ui-btn" disabled={index === 0} onClick={() => move(-1)}>前へ (←)</button>
       <a className="ui-btn" href={item.full} target="_blank" rel="noopener noreferrer">外部で開く</a>
+      {onJump && <button className="ui-btn" onClick={() => onJump(item.postNo)}>元のレスへ</button>}
       <button className="ui-btn" disabled={index === items.length - 1} onClick={() => move(1)}>次へ (→)</button>
     </div>
   </dialog>;

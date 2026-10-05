@@ -2,45 +2,40 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import { useLibrary, toggleFavorite } from "../lib/library";
 
-interface Board {
-  board: string;
-  title: string;
-}
+import { providers } from "../lib/providers";
 
 interface BoardListProps {
+  source: BoardSource;
   onSelect: (board: string) => void;
   selectedBoard: string | null;
 }
 
 export const BoardList: React.FC<BoardListProps> = ({
+  source,
   onSelect,
   selectedBoard,
 }) => {
-  const library = useLibrary();
-  const [boards, setBoards] = useState<Board[]>([]);
+  const library = useLibrary(source);
+  const [boards, setBoards] = useState<BoardInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [reload, setReload] = useState(0);
   const [query, setQuery] = useState("");
 
-  const isElectron = window.location.protocol === "file:";
-  const apiBase = isElectron ? "https://a.4cdn.org" : "/api";
+  const provider = providers[source];
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
 
-    fetch(`${apiBase}/boards.json`, { signal: controller.signal })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
+    provider.boards(controller.signal)
       .then((data) => {
         if (controller.signal.aborted) return;
-        if (!data.boards || !Array.isArray(data.boards)) {
+        if (!Array.isArray(data)) {
           throw new Error("Invalid response structure");
         }
-        setBoards(data.boards);
+        setBoards(data);
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
@@ -49,7 +44,7 @@ export const BoardList: React.FC<BoardListProps> = ({
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, []);
+  }, [provider, reload]);
 
   const filteredBoards = useMemo(() => {
     const sorted = [...boards].sort((a, b) => Number(library.boards.includes(b.board)) - Number(library.boards.includes(a.board)));
@@ -86,7 +81,7 @@ export const BoardList: React.FC<BoardListProps> = ({
           </div>
         )}
 
-        {!loading && error && <div className="error-state">Error: {error}</div>}
+        {!loading && error && <div className="error-state" role="alert">{error}<button className="ui-btn" onClick={() => setReload(value => value + 1)}>再試行</button></div>}
 
         {!loading &&
           !error &&
@@ -106,7 +101,7 @@ export const BoardList: React.FC<BoardListProps> = ({
                 )}
               </div>
               <p className="board-item-title mt-1 text-sm">{b.title}</p>
-            </button><button className="ui-btn favorite-board" aria-label={"/" + b.board + "/ をお気に入りに"} aria-pressed={library.boards.includes(b.board)} onClick={() => toggleFavorite("boards", b.board)}>{library.boards.includes(b.board) ? "解除" : "登録"}</button></div>
+            </button><button className="ui-btn favorite-board" aria-label={"/" + b.board + "/ をお気に入りに"} aria-pressed={library.boards.includes(b.board)} onClick={() => toggleFavorite("boards", b.board, source)}>{library.boards.includes(b.board) ? "解除" : "登録"}</button></div>
           ))}
 
         {!loading && !error && filteredBoards.length === 0 && (

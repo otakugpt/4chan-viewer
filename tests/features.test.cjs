@@ -20,7 +20,7 @@ test('reading data validates storage, bounds favorites and supports deletion', (
   lib.rememberReading('g/123', 125, 800);
   lib.rememberReading('g/123', 124, 200);
   assert.equal(lib.getLibrary().reads['g/123'].post, 125);
-  const restored = lib.parseLibrary(stored);
+  const restored = lib.parseLibrary(JSON.stringify(JSON.parse(stored).sites["4chan"]));
   assert.equal(restored.last.thread, 123);
   assert.equal(restored.boards.length, 1);
   assert.equal(restored.reads['g/123'].scroll, 200);
@@ -51,4 +51,39 @@ test('translation shares in-flight requests, caches successes and retries errors
   assert.equal(calls, 3);
   assert.match(lib.translationError('DEEPL_API_KEY is not set'), /未設定/);
   assert.match(lib.translationError('HTTP 403'), /APIキー/);
+});
+
+test('legacy 4chan library migrates without collisions and clearing removes legacy data', () => {
+  const disk = new Map([['4chan-viewer.library.v1', JSON.stringify({ version: 1, boards: ['g'], threads: ['g/100'], reads: {}, last: { board: 'g', thread: 100 } })]]);
+  const lib = load('src/lib/library.ts', { localStorage: { getItem: key => disk.get(key) ?? null, setItem: (key, value) => disk.set(key, value), removeItem: key => disk.delete(key) } });
+  assert.equal(lib.getLibrary('4chan').last.thread, 100);
+  assert.equal(lib.getLibrary('5ch').last, null);
+  lib.toggleFavorite('threads', 'g/100', '5ch');
+  lib.rememberReading('g/100', 7, 100, '5ch');
+  lib.selectSource('5ch');
+  assert.equal(lib.getLibrary('4chan').reads['g/100'], undefined);
+  assert.equal(JSON.parse(disk.get('rift.library.v2')).sites['4chan'].threads[0], 'g/100');
+  assert.equal(lib.getSource(), '5ch');
+  lib.clearLibrary();
+  assert.equal(disk.has('4chan-viewer.library.v1'), false);
+  assert.equal(lib.getLibrary('5ch').threads.length, 0);
+});
+
+
+test('tabs validate stored destinations, deduplicate, cap count and tolerate unavailable storage', () => {
+  const tabs = load('src/lib/tabs.ts');
+  assert.equal(tabs.parseTabs('{broken').length, 0);
+  const input = { version: 1, tabs: [
+    { source: '4chan', board: 'g', thread: 123 },
+    { source: '4chan', board: 'g', thread: 123 },
+    { source: '5ch', board: 'software', thread: 1608930977 },
+    { source: '5ch', board: '../bad', thread: null },
+    { source: 'other', board: 'g', thread: null },
+    { source: '5ch', board: 'software', thread: 2 },
+  ] };
+  assert.equal(tabs.parseTabs(JSON.stringify(input)).length, 2);
+  input.tabs = Array.from({ length: 30 }, (_, i) => ({ source: '4chan', board: 'g', thread: i + 1 }));
+  assert.equal(tabs.parseTabs(JSON.stringify(input)).length, 20);
+  assert.equal(tabs.loadTabs().length, 0);
+  assert.doesNotThrow(() => tabs.saveTabs([]));
 });

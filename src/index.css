@@ -46,8 +46,8 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 12px;
-  gap: 12px;
+  padding: 8px;
+  gap: 6px;
 }
 
 .topbar {
@@ -58,8 +58,9 @@ body {
 }
 
 .topbar-title {
-  margin: 4px 0 0;
-  font-size: 1.4rem;
+  margin: 0;
+  font-size: 1.1rem;
+  flex-shrink: 0;
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: 0.03em;
@@ -68,8 +69,10 @@ body {
 .topbar-meta {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
 }
 
 .workspace-grid {
@@ -102,7 +105,7 @@ body {
 }
 
 .panel-header {
-  padding: 14px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid rgba(141, 185, 255, 0.2);
   background: linear-gradient(
     180deg,
@@ -128,7 +131,7 @@ body {
 
 .panel-search {
   width: 100%;
-  margin-top: 10px;
+  margin-top: 6px;
   border: 1px solid rgba(153, 190, 255, 0.28);
   border-radius: 10px;
   background: rgba(6, 10, 20, 0.78);
@@ -579,7 +582,7 @@ body {
 .favorite-board { position: absolute; right: 8px; top: 10px; }
 .favorite-strip { display: flex; gap: 8px; overflow-x: auto; flex-shrink: 0; padding: 2px; }
 .workspace-pane { min-width: 0; }
-.topbar { padding: 12px 16px; }
+.topbar { padding: 6px 10px; flex-shrink: 0; border-radius: 10px; }
 .panel-header > .flex > .flex { flex-wrap: wrap; }
 .gallery-link { width: 100%; cursor: zoom-in; }
 .post-image-link { cursor: zoom-in; }
@@ -598,3 +601,43 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+.url-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.url-bar input, .reader-options textarea { background: var(--surface-strong); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.url-bar input { flex: 1; min-width: 180px; }
+.url-bar [role=alert] { color: var(--danger); width: 100%; }
+.reader-options { margin-top: 10px; font-size: .8rem; }
+.reader-options[open] { max-height: 210px; overflow-y: auto; }
+.reader-options label { display: block; margin: 8px 0; }
+.reader-options textarea { display: block; width: 100%; min-height: 60px; }
+.image-consent, .gallery-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; font-size: .75rem; }
+.reader-notice { margin-top: 8px; font-size: .8rem; }
+.media-placeholder, .media-error { display: flex; align-items: center; justify-content: center; flex-direction: column; min-height: 140px; gap: 8px; padding: 12px; font-size: .75rem; overflow-wrap: anywhere; }
+.reply-anchor { color: var(--accent); text-decoration: underline; cursor: pointer; }
+.reply-preview { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--bg-deep); margin-top: 8px; white-space: pre-wrap; max-height: 240px; overflow: auto; }
+.aa-body { font-family: "MS PGothic", "Mona", monospace; white-space: pre; overflow-x: auto; line-height: 1.2; }
+.viewer-toolbar { flex-wrap: wrap; }
+input[type=checkbox] { accent-color: var(--accent); margin-right: 5px; }
+
+/* Keep the navigation compact without shrinking touch targets. */
+.topbar .ui-btn { min-height: 30px; }
+.topbar .chip { white-space: nowrap; }
+.topbar .url-bar { flex: 1 1 240px; min-width: 0; gap: 4px; }
+.topbar .url-bar input { width: 0; min-width: 100px; padding: 5px 8px; font-size: .78rem; }
+.topbar .url-bar [role=alert] { font-size: .75rem; overflow-wrap: anywhere; }
+.favorite-strip { gap: 6px; }
+.reader-options { margin-top: 6px; }
+.image-consent { padding: 4px 0 0; }
+@media (max-width: 680px) {
+  .topbar { align-items: flex-start; gap: 8px; }
+  .topbar-meta { flex-basis: calc(100% - 64px); }
+  .topbar .url-bar { order: 1; flex-basis: 100%; }
+  .topbar .ui-btn { min-height: 34px; }
+}
+
+.reader-tabs { display: flex; flex-shrink: 0; gap: 4px; overflow-x: auto; padding: 2px; }
+.reader-tab { display: inline-flex; flex-shrink: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.reader-tab .ui-btn { border: 0; border-radius: 0; min-height: 30px; }
+.reader-tab .ui-btn:first-child { max-width: 250px; overflow: hidden; text-overflow: ellipsis; }
+.reader-tab--active { border-color: var(--accent-strong); }
+.reader-tab--active .ui-btn { background: rgba(20, 119, 104, .35); }

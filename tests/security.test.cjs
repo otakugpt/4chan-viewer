@@ -14,7 +14,7 @@ function load(name, overrides = {}) {
   }).outputText;
   const module = { exports: {} };
   const run = vm.runInThisContext('(function(require,module,exports,__dirname){' + source + '\n})', { filename });
-  run(id => Object.hasOwn(overrides, id) ? overrides[id] : require(id), module, module.exports, path.dirname(filename));
+  run(id => Object.hasOwn(overrides, id) ? overrides[id] : id.startsWith('./') ? load(id.slice(2), overrides) : require(id), module, module.exports, path.dirname(filename));
   return module.exports;
 }
 

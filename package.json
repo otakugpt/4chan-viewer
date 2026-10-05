@@ -1,7 +1,7 @@
 {
   "name": "4chan-viewer",
   "version": "1.0.0",
-  "description": "4chan thread viewer with gallery and downloader (Electron + Vite + React + Tailwind)",
+  "description": "RIFT: read-only 4chan and 5ch viewer with gallery and downloader",
   "main": "dist-electron/main.js",
   "type": "commonjs",
   "scripts": {
