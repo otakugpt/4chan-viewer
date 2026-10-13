@@ -106,7 +106,7 @@ test('main IPC checks window, document and main frame and serializes translation
   let finish;
   let calls = 0;
   const electron = {
-    app: { isPackaged: true, whenReady: () => Promise.resolve(), on() {} },
+    app: { setAppUserModelId() {}, isPackaged: true, whenReady: () => Promise.resolve(), on() {} },
     BrowserWindow: class extends EventEmitter {
       constructor() {
         super(); win = this;
@@ -175,7 +175,7 @@ test('save IPC returns cancellation, prevents overlap, releases locks and identi
   let mode = 'pending';
   const calls = [];
   const electron = {
-    app: { isPackaged: true, whenReady: () => Promise.resolve(), on() {} },
+    app: { setAppUserModelId() {}, isPackaged: true, whenReady: () => Promise.resolve(), on() {} },
     BrowserWindow: class extends EventEmitter {
       constructor() {
         super(); win = this; this.webContents = new EventEmitter();

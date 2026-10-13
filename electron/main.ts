@@ -90,6 +90,7 @@ function createWindow() {
 
   const win = new BrowserWindow({
     title: "RIFT",
+    icon: path.join(__dirname, "..", devServerUrl ? "public" : "dist", "icons", process.platform === "win32" ? "rift.ico" : "rift-256.png"),
     width: 1400,
     height: 900,
     webPreferences: {
@@ -134,6 +135,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === "win32") app.setAppUserModelId("org.rift.viewer");
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

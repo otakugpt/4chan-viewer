@@ -14,7 +14,8 @@
     "build": "vite build && tsc -p electron/tsconfig.json --outDir dist-electron",
     "lint": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
     "electron": "npm run build && electron ./dist-electron/main.js",
-    "test": "node --test tests/*.test.cjs"
+    "test": "node --test tests/*.test.cjs",
+    "icons": "node scripts/build-icons.cjs"
   },
   "keywords": [
     "electron",

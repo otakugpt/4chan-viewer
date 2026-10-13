@@ -336,3 +336,11 @@ Dependabot で npm / GitHub Actions の週次更新PRを設定します。
 - 過去ログは既存のメモリキャッシュ（合計24文書／32MiB）を共有し60秒保持。その間は通常DATの再取得を省く。Range要求は使わず、期限後は通常DATから再確認。自動永続キャッシュは作らない。
 - 過去ログ取得成功時、先頭PostInfoのarchivedフラグで本文ヘッダーに「公式過去ログ」を表示。画像・NG・本文保存は通常スレッドと共通。通常DATと過去ログともに404/410なら両方取得不能と案内し、削除の断定はしない。
 - 現行の公式板一覧にない板や、現行公式ホストのoysterに収録されていないスレッドは非対応。外部の任意ホストへ探索を広げない。
+
+## 14. カラスアイコン
+
+- 採用案C: ミント地に濃紺のカラス頭部シルエット、小さな目、首元の切れ目。元PNGは `assets/branding/rift-crow-master.png`、内蔵image_genの生成指示は同ディレクトリの `source.json`。
+- `npm run icons` は隔離した非表示のElectronでnativeImageを使用し、元画像の形を変えずサイズ変換。`public/icons/` に16/24/32/48/64/128/256px PNGと全サイズを格納したICOを出力。外部通信・追加ライブラリ・APIキーは不要。
+- BrowserWindowのiconはWindowsでICO、それ以外で256px PNG。開発時はpublic、通常起動時はビルド済みdist内から参照。Windowsでは起動前にAppUserModelID `org.rift.viewer` を設定。
+- ヘッダーは48px PNGを24px角で表示し、RIFTの文字を維持。装飾画像はスクリーンリーダーから隠す。faviconは32px PNG。Viteのpublicコピー機構で開発／通常起動の両方に対応。
+- パッケージ名・ユーザーデータ領域は変更しない。通常起動中のタスクバー／ウィンドウ用であり、既存ピン留めショートカットやelectron.exeの埋め込みアイコンは書き換えない。配布用EXE／インストーラー作成は対象外。

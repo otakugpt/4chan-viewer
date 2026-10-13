@@ -95,7 +95,7 @@ export const App: React.FC = () => {
   const renderedNavigation = navigation.current;
   return <ThreadNavigation.Provider value={navigateFive}><div className="app-shell">
     <header className="topbar panel-surface">
-      <h1 className="topbar-title" title="RIFT（仮称）">RIFT</h1>
+      <h1 className="topbar-title" title="RIFT（仮称）"><img className="app-icon" src="./icons/rift-48.png" width="24" height="24" alt="" aria-hidden="true" />RIFT</h1>
       <div className="topbar-meta">
         <nav aria-label="掲示板サイト" className="flex gap-2">{(["4chan", "5ch"] as BoardSource[]).map(site => <button key={site} data-source={site} className={`ui-btn ${browseSource === site ? "ui-btn--active" : ""}`} aria-pressed={browseSource === site} onClick={() => changeSource(site)}>{site}</button>)}</nav>
         {browseSource === "5ch" && <form onSubmit={openUrl} className="url-bar"><input value={url} onChange={e => setUrl(e.target.value)} aria-label="5chのURL" placeholder="5chの板・スレッドURL（旧 .net も対応）" /><button className="ui-btn" disabled={opening || !url.trim()}>{opening ? "確認中…" : "URLを開く"}</button>{urlError && <span role="alert">{urlError}</span>}</form>}

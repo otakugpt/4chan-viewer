@@ -38,7 +38,7 @@ let cancelSave = true;
 const Module = require('node:module');
 const originalLoad = Module._load;
 class HiddenWindow extends electron.BrowserWindow {
-  constructor(options) { super({ ...options, show: false, webPreferences: { ...options.webPreferences, backgroundThrottling: false } }); }
+  constructor(options) { assert.ok(fs.existsSync(options.icon)); assert.equal(electron.nativeImage.createFromPath(options.icon).isEmpty(), false); super({ ...options, show: false, webPreferences: { ...options.webPreferences, backgroundThrottling: false } }); }
 }
 Module._load = function (name, ...args) {
   if (name === './network') return { ...originalLoad.call(this, name, ...args), getBytes: async url => {
@@ -85,6 +85,7 @@ app.whenReady().then(() => {
           translated: await window.electron.translate('hello')
         }))()`);
         assert.equal(result.rendered, true);
+        assert.equal(await win.webContents.executeJavaScript(`(async () => { const icon = document.querySelector('.app-icon'); await icon.decode(); return icon.naturalWidth === 48 && icon.getBoundingClientRect().width === 24 && document.querySelector('link[rel="icon"]').href.endsWith('/icons/rift-32.png'); })()`), true);
         assert.equal(result.isolated, true);
         assert.equal(result.invalid.error, 'Missing text');
         assert.deepEqual(result.translated, { translatedText: 'smoke translation' });
