@@ -45,6 +45,8 @@ Module._load = function (name, ...args) {
     networkReads++;
     if (url === 'https://menu.5ch.io/bbsmenu.html') return { status: 200, headers: {}, body: Buffer.from('<a href="https://egg.5ch.io/software/">Software</a>') };
     if (url.endsWith('/software/subject.txt')) return { status: 200, headers: {}, body: Buffer.from('1608930977.dat<>RIFT fixture (3)\n') };
+    if (url.endsWith('/software/dat/1608930976.dat')) return { status: 404, headers: {}, body: Buffer.alloc(0) };
+    if (url.endsWith('/software/oyster/1608/1608930976.dat')) return { status: 200, headers: {}, body: Buffer.from('Archive<><>2026<>archived previous thread<>Previous fixture\nReply<><>2026<>https://egg.5ch.io/test/read.cgi/software/1608930977/<>\n') };
     if (url.endsWith('/software/dat/1608930977.dat')) return { status: 200, headers: {}, body: Buffer.from('Alice<><>2026 ID:ONE<>hello https://i.ibb.co/abc1234/fixture.png<>fixture\nBob<><>2026 ID:TWO<>&gt;&gt;1 second https://i.ibb.co/abc1234/fixture.png<>\nCarol<><>2026 ID:THREE<>last<>\n') };
     if (url === 'https://i.ibb.co/abc1234/fixture.png') { fiveImageReads++; return { status: 200, headers: { 'content-type': 'image/png' }, body: fivePng }; }
     throw new Error('Unexpected fixture URL');
@@ -68,7 +70,7 @@ app.whenReady().then(() => {
         return new Response(JSON.stringify([{ threads: [{ no, sub: board + ' &amp; test', com: 'hello', tim: no }] }]), { headers });
       }
       if (url.pathname.endsWith('/archive.json')) return new Response('[]', { headers });
-      return new Response(JSON.stringify({ posts: Array.from({ length: 16 }, (_, i) => ({ no: no + i, com: i === 0 ? 'hello https://example.test/thread?x=1&amp;y=2' : 'A &amp; B<br>Read position fixture ' + i, tim: no + i, ext: '.jpg' })) }), { headers });
+      return new Response(JSON.stringify({ posts: Array.from({ length: 16 }, (_, i) => ({ no: no + i, com: i === 0 ? 'hello https://example.test/thread?x=1&amp;y=2 https://egg.5ch.net/test/read.cgi/software/1608930976/' : 'A &amp; B<br>Read position fixture ' + i, tim: no + i, ext: '.jpg' })) }), { headers });
     }
     if (url.hostname === 'i.4cdn.org') return new Response('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#17394a"/><circle cx="320" cy="240" r="100" fill="#62ddff"/></svg>', { headers: { 'Content-Type': 'image/svg+xml' } });
     return new Response('', { status: 404 });
@@ -390,6 +392,25 @@ app.whenReady().then(() => {
           if (document.querySelectorAll('.offline-thread .post-card').length !== 16 || !document.querySelectorAll('.offline-thread .post-body')[1].textContent.includes('A & B')) throw new Error('4chan snapshot encoding');
 
         })()`);
+        const promptsBeforeInternal = externalPrompts, openedBeforeInternal = externalOpened.length;
+        await run(`(async () => {
+          document.querySelector('.offline-thread .internal-thread-link').click();
+          await waitFor(() => !document.querySelector('.offline-thread') && document.querySelectorAll('.post-card').length === 2);
+          if (!document.querySelector('.thread-heading').parentElement.textContent.includes('公式過去ログ')) throw new Error('Archive label missing');
+          if (!document.querySelector('.post-body').textContent.includes('archived previous thread')) throw new Error('Wrong archive content');
+          if (document.querySelector('[data-source="5ch"]').getAttribute('aria-pressed') !== 'true') throw new Error('5ch link opened wrong site');
+          const tabs = document.querySelectorAll('.reader-tab').length;
+          document.querySelector('.post-body .internal-thread-link').click();
+          await waitFor(() => document.querySelectorAll('.post-card').length === 3);
+          if (document.querySelectorAll('.reader-tab').length !== tabs + 1) throw new Error('Normal linked thread not added');
+          [...document.querySelectorAll('.reader-tab > button:first-child')].find(b => b.textContent.includes('1608930976')).click();
+          await waitFor(() => document.querySelectorAll('.post-card').length === 2);
+          document.querySelector('.post-body .internal-thread-link').click();
+          await waitFor(() => document.querySelectorAll('.post-card').length === 3);
+          if (document.querySelectorAll('.reader-tab').length !== tabs + 1) throw new Error('Internal link duplicated tab');
+        })()`);
+        assert.equal(externalPrompts, promptsBeforeInternal); assert.equal(externalOpened.length, openedBeforeInternal);
+        console.log('PASS: 5ch internal links from saved 4chan text, official archive fallback, live link navigation, tab reuse, no external browser');
         console.log('PASS: offline save/overwrite/reload/delete/clear, no offline network, compact boards, confirmed external links, mobile layout');
         console.log('PASS: library favorites/history/search/delete/pause/restore + 4chan regression + RIFT 5ch boards/threads/posts, references, image consent/dedup/blob preview/safe save, ID filters, URL import and site isolation');
         clearTimeout(timeout);

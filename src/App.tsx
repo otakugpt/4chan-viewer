@@ -4,6 +4,7 @@ import { LibraryList } from "./components/LibraryList";
 import { SavedThreadList, SavedThreadView } from "./components/SavedThreads";
 import { deleteSaved, refreshSaved, SavedThread } from "./lib/savedThreads";
 import { ThreadList } from "./components/ThreadList";
+import { ThreadNavigation } from "./components/ThreadNavigation";
 import { ThreadView } from "./components/ThreadView";
 import { useSave } from "./components/SaveProvider";
 import { forgetSelection, getLibrary, useLibrary, getSource, selectSource, rememberSelection, clearLibrary } from "./lib/library";
@@ -72,21 +73,27 @@ export const App: React.FC = () => {
       else activate(source, null, null);
     }
   };
-  const openUrl = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const navigateFive = async (raw: string) => {
     const generation = ++navigation.current;
     setOpening(true); setUrlError("");
     try {
       if (!window.electron?.fiveRequest) throw new Error("5ch閲覧は Electron アプリで利用できます。");
-      const result = await window.electron.fiveRequest({ kind: "resolve", url: url.trim() });
+      const result = await window.electron.fiveRequest({ kind: "resolve", url: raw.trim() });
       if (generation !== navigation.current) return;
       if ("error" in result) throw new Error(result.error);
-      if ("board" in result) select(result.board, result.thread);
-    } catch (error) { if (generation === navigation.current) setUrlError(error instanceof Error ? error.message : "URLを開けませんでした。"); }
+      if (!("board" in result)) throw new Error("移動先を確認できませんでした。");
+      openTab("5ch", result.board, result.thread);
+      setMode("board");
+    } catch (error) { if (generation === navigation.current) throw error; }
     finally { if (generation === navigation.current) setOpening(false); }
   };
+  const openUrl = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try { await navigateFive(url); }
+    catch (error) { setUrlError(error instanceof Error ? error.message : "URLを開けませんでした。"); }
+  };
   const renderedNavigation = navigation.current;
-  return <div className="app-shell">
+  return <ThreadNavigation.Provider value={navigateFive}><div className="app-shell">
     <header className="topbar panel-surface">
       <h1 className="topbar-title" title="RIFT（仮称）">RIFT</h1>
       <div className="topbar-meta">
@@ -114,7 +121,7 @@ export const App: React.FC = () => {
     })}</nav>}
     {tabNotice && <p className="reader-notice" role="status">{tabNotice}</p>}
     <main className="workspace-grid">
-      <section className="workspace-pane"><LibrarySidebar source={browseSource} selectedBoard={listBoard} mode={mode} onMode={setMode} onBoard={chooseBoard} /></section>
+      <section className="workspace-pane"><LibrarySidebar source={browseSource} selectedBoard={listBoard} mode={mode} onMode={next => { navigation.current++; setOpening(false); setMode(next); }} onBoard={chooseBoard} /></section>
       <section className="workspace-pane">{mode === "saved" ? <SavedThreadList onOpen={doc => { if (navigation.current === renderedNavigation) setSavedDoc(doc); }} onDelete={key => { if (!key || savedDoc?.key === key) setSavedDoc(null); }} /> : mode !== "board" ? <LibraryList key={mode} mode={mode} active={source + "/" + board + "/" + thread} onSelect={openTab} /> : listBoard ? <ThreadList key={browseSource + listBoard} source={browseSource} board={listBoard} onSelect={t => select(listBoard, t)} selectedThread={source === browseSource && board === listBoard ? thread : null} /> : <EmptyPane title="Select a Board" />}</section>
       <section className="workspace-pane">{savedDoc ? <SavedThreadView key={savedDoc.key + savedDoc.savedAt} doc={savedDoc} onClose={() => setSavedDoc(null)} /> : board && thread ? <ThreadView key={source + board + "/" + thread} source={source} board={board} threadId={thread} /> : <EmptyPane title="Select a Thread" />}</section>
     </main>
@@ -124,5 +131,5 @@ export const App: React.FC = () => {
       {failed.length > 0 && <button className="ui-btn mt-2" disabled={busy} onClick={() => save(failed)}>失敗した {failed.length} 件だけ再試行</button>}
       <div className="progress-track mt-3"><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
     </footer>}
-  </div>;
+  </div></ThreadNavigation.Provider>;
 };

@@ -143,7 +143,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
 
   return <div className="panel-surface pane-flex">
     <div className="panel-header">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="panel-title thread-heading">{library.metadata[readingKey]?.title || `/${board}/ No.${threadId}`}</h2><p className="meta mt-1 text-[11px] text-slate-400">{source} · Posts {posts.length} / Images {mediaList.length}</p></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="panel-title thread-heading">{library.metadata[readingKey]?.title || `/${board}/ No.${threadId}`}</h2><p className="meta mt-1 text-[11px] text-slate-400">{source}{source === "5ch" && posts[0]?.archived ? " · 公式過去ログ" : ""} · Posts {posts.length} / Images {mediaList.length}</p></div>
         <div className="flex flex-wrap gap-2">
           <button className="ui-btn" aria-pressed={library.threads.includes(readingKey)} onClick={() => toggleFavorite("threads", readingKey, source, plainText(posts[0]?.sub ?? ""))}>{library.threads.includes(readingKey) ? "お気に入り解除" : "お気に入り"}</button>
           <button className={`ui-btn ${viewMode === "thread" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("thread")}>Thread</button>

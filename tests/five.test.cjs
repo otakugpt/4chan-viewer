@@ -112,3 +112,73 @@ test('ImgBB direct images pass the existing allowlist without admitting viewer p
   assert.deepEqual(media.extractImages(url + ' ' + url), [url]);
   for (const bad of ['https://ibb.co/w04Prt6', 'https://i.ibb.co.evil.test/w04Prt6/a.png', url + '?key=x', url + '#x', 'http://i.ibb.co/w04Prt6/a.png', 'https://i.ibb.co/w04Prt6/a.svg']) assert.equal(media.normalizeFiveImage(bad), null);
 });
+
+test('5ch link parser rejects disguised hosts and accepts old/new thread URLs', () => {
+  for (const url of ['https://fate.5ch.io/test/read.cgi/liveuranus/1788926101/', 'http://fate.5ch.net/test/read.cgi/liveuranus/1788926101/l50', 'https://fate.5ch.io/test/read.cgi/liveuranus/1788926101/1-100']) assert.deepEqual(five.parseFiveUrl(url), { board: 'liveuranus', thread: 1788926101 });
+  for (const url of ['https://fate.5ch.io.evil.test/test/read.cgi/liveuranus/1788926101/', 'https://fate.5ch.io@evil.test/test/read.cgi/liveuranus/1788926101/', 'https://user@fate.5ch.io/test/read.cgi/liveuranus/1788926101/', 'https://fate.5ch.io/test/read.cgi/liveuranus/1788926101/?next=evil', 'https://fate.5ch.io/test/read.cgi/liveuranus/1788926101/\n', 'https://fate.5ch.io/test/read.cgi/liveuranus/1788926101/\u202e']) assert.equal(five.parseFiveUrl(url), null);
+});
+
+test('missing DAT falls back once to bounded official oyster and caches archive without ranges', async () => {
+  const calls = [];
+  const service = load('five', { './network': { serialQueue: () => work => work(), getBytes: async (url, limit, headers) => {
+    calls.push(url); assert.equal(limit, 4 * 1024 * 1024);
+    if (url.endsWith('bbsmenu.html')) return { status: 200, headers: {}, body: Buffer.from('<a href="https://fate.5ch.io/liveuranus/">Board</a>') };
+    if (url === 'https://fate.5ch.io/liveuranus/dat/1788926101.dat') return { status: 404, headers: {}, body: Buffer.alloc(0) };
+    assert.equal(url, 'https://fate.5ch.io/liveuranus/oyster/1788/1788926101.dat');
+    assert.equal(headers.Range, undefined);
+    return { status: 200, headers: {}, body: Buffer.from(row() + row('second')) };
+  } } });
+  const request = { kind: 'posts', board: 'liveuranus', thread: 1788926101 };
+  const result = await service.fiveRequest(request);
+  assert.equal(result.posts.length, 2); assert.equal(result.posts[0].archived, true);
+  assert.equal(calls.filter(url => url.includes('/oyster/')).length, 1);
+  const count = calls.length;
+  assert.equal((await service.fiveRequest(request)).posts[0].archived, true);
+  assert.equal(calls.length, count);
+});
+
+test('archive fallback follows menu migration, not a host supplied by a post link', async () => {
+  const calls = []; let menus = 0;
+  const service = load('five', { './network': { serialQueue: () => work => work(), getBytes: async url => {
+    calls.push(url);
+    if (url.endsWith('bbsmenu.html')) return { status: 200, headers: {}, body: Buffer.from('<a href="https://' + (++menus === 1 ? 'old' : 'new') + '.5ch.io/software/">Board</a>') };
+    if (url.includes('/dat/')) return { status: 410, headers: {}, body: Buffer.alloc(0) };
+    assert.equal(url, 'https://new.5ch.io/software/oyster/1608/1608930977.dat');
+    return { status: 200, headers: {}, body: Buffer.from(row()) };
+  } } });
+  const resolved = await service.fiveRequest({ kind: 'resolve', url: 'https://untrusted.5ch.net/test/read.cgi/software/1608930977/' });
+  assert.equal((await service.fiveRequest({ kind: 'posts', ...resolved })).posts[0].archived, true);
+  assert.equal(calls.some(url => url.includes('untrusted.')), false);
+});
+
+test('access denial, rate limits, redirects and malformed replies never trigger archive bypass', async () => {
+  for (const status of [403, 429, 503, 302, 200]) {
+    const calls = [];
+    const service = load('five', { './network': { serialQueue: () => work => work(), getBytes: async url => {
+      calls.push(url);
+      if (url.endsWith('bbsmenu.html')) return { status: 200, headers: {}, body: Buffer.from('<a href="https://egg.5ch.io/software/">Board</a>') };
+      if (status === 302) throw Object.assign(new Error('Redirect rejected'), { code: 'REDIRECT' });
+      return { status, headers: {}, body: Buffer.from('<html>not a DAT</html>') };
+    } } });
+    assert.ok((await service.fiveRequest({ kind: 'posts', board: 'software', thread: 1608930977 })).error);
+    assert.equal(calls.some(url => url.includes('/oyster/')), false);
+  }
+});
+
+test('missing, malformed or blocked archives report failure without contacting another archive', async () => {
+  for (const status of [404, 403, 429, 200, 302]) {
+    const calls = [];
+    const service = load('five', { './network': { serialQueue: () => work => work(), getBytes: async url => {
+      calls.push(url);
+      if (url.endsWith('bbsmenu.html')) return { status: 200, headers: {}, body: Buffer.from('<a href="https://egg.5ch.io/software/">Board</a>') };
+      if (url.includes('/dat/')) return { status: 404, headers: {}, body: Buffer.alloc(0) };
+      if (status === 302) throw Object.assign(new Error('Redirect rejected'), { code: 'REDIRECT' });
+      return { status, headers: {}, body: Buffer.from('<html>challenge</html>') };
+    } } });
+    const result = await service.fiveRequest({ kind: 'posts', board: 'software', thread: 1608930977 });
+    assert.ok(result.error);
+    if (status === 404) assert.match(result.error, /通常DAT・公式過去ログ/);
+    assert.equal(calls.filter(url => url.includes('/oyster/')).length, 1);
+    assert.ok(calls.every(url => ['egg.5ch.io', 'menu.5ch.io'].includes(new URL(url).hostname)));
+  }
+});

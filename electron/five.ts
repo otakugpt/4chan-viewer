@@ -1,3 +1,5 @@
+import { parseFiveUrl } from "./five-url";
+export { parseFiveUrl } from "./five-url";
 import { getBytes, serialQueue } from "./network";
 import { extractImages } from "./five-media";
 
@@ -35,17 +37,6 @@ export function parseDat(text: string): PostInfo[] {
     return { no: index + 1, ...(index === 0 ? { sub: fields[4] } : {}), name: fields[0], date: fields[2], id: /\bID:([^\s<>]+)/.exec(fields[2])?.[1], com: fields[3], media: extractImages(fields[3]) };
   });
 }
-export function parseFiveUrl(raw: unknown): { board: string; thread: number | null } | null {
-  if (typeof raw !== "string" || raw.length > 2048) return null;
-  try {
-    const u = new URL(raw);
-    if (!/^https?:$/.test(u.protocol) || !/^[a-z0-9-]+\.5ch\.(io|net)$/.test(u.hostname) || u.username || u.password || u.port || u.search || u.hash) return null;
-    const thread = /^\/test\/read\.cgi\/([a-zA-Z0-9_]{1,32})\/(\d{9,13})(?:\/(?:l\d+|\d+(?:-\d*)?)?)?\/?$/.exec(u.pathname);
-    if (thread) return { board: thread[1], thread: Number(thread[2]) };
-    const board = /^\/([a-zA-Z0-9_]{1,32})\/?$/.exec(u.pathname);
-    return board ? { board: board[1], thread: null } : null;
-  } catch { return null; }
-}
 const queue = serialQueue(1000, 12);
 let menu: Board[] = [], menuAt = 0, recheckedAt = 0;
 class FiveError extends Error {
@@ -72,10 +63,10 @@ async function getMenu(force = false) {
   }
   return menu;
 }
-async function getDocument(url: string, dat: boolean) {
+async function getDocument(url: string, dat: boolean, archived = false) {
   const old = cache.get(url);
-  if (old && Date.now() - old.at < (dat ? 10_000 : 30_000)) return old.body;
-  const range = dat && old && old.body.length > 0 && Date.now() - old.fullAt < 300_000;
+  if (old && Date.now() - old.at < (archived ? 60_000 : dat ? 10_000 : 30_000)) return old.body;
+  const range = dat && !archived && old && old.body.length > 0 && Date.now() - old.fullAt < 300_000;
   let fullAt = Date.now();
   let r = await getBytes(url, MAX, range ? { Range: `bytes=${old.body.length - 1}-` } : {});
   if (range && r.status === 206) {
@@ -111,20 +102,41 @@ export function fiveRequest(input: unknown): Promise<FiveResult> {
     if (!board) return { error: "公式板一覧にない板です。URLや板名を確認してください。", code: "BOARD_UNKNOWN" };
     if (resolved) return resolved;
     if (r.kind === "threads" || r.kind === "posts") {
-      const read = async (target: Board): Promise<FiveResult> => r.kind === "threads"
-        ? { threads: parseSubjects(decode(await getDocument(`https://${target.host}/${target.board}/subject.txt`, false))) }
-        : { posts: parseDat(decode(await getDocument(`https://${target.host}/${target.board}/dat/${r.thread}.dat`, true))) };
+      const archiveUrl = (target: Board) => `https://${target.host}/${target.board}/oyster/${String((r as { thread: number }).thread).slice(0, 4)}/${(r as { thread: number }).thread}.dat`;
+      const readArchive = async (target: Board): Promise<FiveResult> => {
+        const posts = parseDat(decode(await getDocument(archiveUrl(target), true, true)));
+        posts[0].archived = true;
+        return { posts };
+      };
+      const read = async (target: Board): Promise<FiveResult> => {
+        if (r.kind === "threads") return { threads: parseSubjects(decode(await getDocument(`https://${target.host}/${target.board}/subject.txt`, false))) };
+        const archived = cache.get(archiveUrl(target));
+        if (archived && Date.now() - archived.at < 60_000) return readArchive(target);
+        return { posts: parseDat(decode(await getDocument(`https://${target.host}/${target.board}/dat/${r.thread}.dat`, true))) };
+      };
       try { return await read(board); }
       catch (error) {
+        let failure = error;
         const code = (error as { code?: string }).code;
         if (error instanceof FiveError && !["THREAD_UNAVAILABLE", "BOARD_UNAVAILABLE", "INVALID_RESPONSE"].includes(code ?? "")) throw error;
         // Never follow an upstream Location header; resolve migration from the official menu only.
         let updated: Board | undefined;
         try { updated = (await recheckMenu()).find(b => b.board === board!.board); }
         catch { throw new FiveError("MENU_UNAVAILABLE", "取得に失敗し、公式板一覧の再確認もできませんでした。移転の有無は不明です。時間を置いて再試行してください。"); }
-        if (updated && updated.host !== board.host) return read(updated);
-        if (code === "REDIRECT") throw new FiveError("MOVE_UNCONFIRMED", "転送を検出しましたが、公式板一覧では移転先を確認できません。安全のため転送先には接続していません。");
-        throw error;
+        if (updated && updated.host !== board.host) {
+          board = updated;
+          try { return await read(board); } catch (next) { failure = next; }
+        }
+        // Public official archive only, and only after a definite missing-DAT response.
+        if (r.kind === "posts" && failure instanceof FiveError && failure.code === "THREAD_UNAVAILABLE") {
+          try { return await readArchive(board); }
+          catch (archiveError) {
+            if (archiveError instanceof FiveError && archiveError.code === "THREAD_UNAVAILABLE") throw new FiveError("THREAD_UNAVAILABLE", "通常DAT・公式過去ログのどちらからも取得できませんでした。削除や収録状況は確定できません。保存済み本文があれば、左の一覧から読めます。");
+            throw archiveError;
+          }
+        }
+        if ((failure as { code?: string }).code === "REDIRECT") throw new FiveError("MOVE_UNCONFIRMED", "転送を検出しましたが、公式板一覧では移転先を確認できません。安全のため転送先には接続していません。");
+        throw failure;
       }
     }
     return { error: "不正な要求です。" };
