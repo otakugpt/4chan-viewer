@@ -7,6 +7,7 @@ declare global {
     total: number; saved: number; failedTargets: ImageTarget[]; error?: string;
   }
   interface ElectronAPI {
+    openExternal: (url: string) => Promise<{ opened: boolean; error?: string }>;
     fiveRequest: (request: FiveRequest) => Promise<FiveResult>;
     fiveImage: (url: string) => Promise<RemoteImageResult>;
     translate: (text: string) => Promise<{ translatedText: string } | { error: string }>;

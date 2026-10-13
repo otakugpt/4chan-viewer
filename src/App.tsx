@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { LibrarySidebar, LibraryMode } from "./components/LibrarySidebar";
 import { LibraryList } from "./components/LibraryList";
+import { SavedThreadList, SavedThreadView } from "./components/SavedThreads";
+import { deleteSaved, refreshSaved, SavedThread } from "./lib/savedThreads";
 import { ThreadList } from "./components/ThreadList";
 import { ThreadView } from "./components/ThreadView";
 import { useSave } from "./components/SaveProvider";
@@ -10,6 +12,9 @@ import { loadTabs, saveTabs, tabId, MAX_TABS, ReaderTab } from "./lib/tabs";
 
 const EmptyPane = ({ title }: { title: string }) => <div className="panel-surface pane-flex empty-pane"><h2>{title}</h2><p className="mt-3">左から板、スレッドを選択してください。</p></div>;
 export const App: React.FC = () => {
+  const [savedDoc, setSavedDoc] = useState<SavedThread | null>(null);
+  const [clearing, setClearing] = useState(false);
+  useEffect(() => { void refreshSaved(); }, []);
   const [source, setSource] = useState<BoardSource>(getSource);
   const [board, setBoard] = useState<string | null>(() => getLibrary(getSource()).last?.board ?? null);
   const [thread, setThread] = useState<number | null>(() => getLibrary(getSource()).last?.thread ?? null);
@@ -34,7 +39,7 @@ export const App: React.FC = () => {
   const library = useLibrary(source);
   const { progress, status, busy, failed, save } = useSave();
   const activate = (next: BoardSource, b: string | null, t: number | null) => {
-    navigation.current++; setOpening(false); setUrlError(""); setTabNotice("");
+    navigation.current++; setSavedDoc(null); setOpening(false); setUrlError(""); setTabNotice("");
     setSource(next); selectSource(next); setBoard(b); setThread(t); setBrowseSource(next); setListBoard(b);
     if (b) rememberSelection(b, t, next); else forgetSelection(next);
   };
@@ -80,15 +85,22 @@ export const App: React.FC = () => {
     } catch (error) { if (generation === navigation.current) setUrlError(error instanceof Error ? error.message : "URLを開けませんでした。"); }
     finally { if (generation === navigation.current) setOpening(false); }
   };
+  const renderedNavigation = navigation.current;
   return <div className="app-shell">
     <header className="topbar panel-surface">
       <h1 className="topbar-title" title="RIFT（仮称）">RIFT</h1>
       <div className="topbar-meta">
         <nav aria-label="掲示板サイト" className="flex gap-2">{(["4chan", "5ch"] as BoardSource[]).map(site => <button key={site} data-source={site} className={`ui-btn ${browseSource === site ? "ui-btn--active" : ""}`} aria-pressed={browseSource === site} onClick={() => changeSource(site)}>{site}</button>)}</nav>
         {browseSource === "5ch" && <form onSubmit={openUrl} className="url-bar"><input value={url} onChange={e => setUrl(e.target.value)} aria-label="5chのURL" placeholder="5chの板・スレッドURL（旧 .net も対応）" /><button className="ui-btn" disabled={opening || !url.trim()}>{opening ? "確認中…" : "URLを開く"}</button>{urlError && <span role="alert">{urlError}</span>}</form>}
-        <span className="chip meta">{board ? `/${board}/` : "No board"}</span>
-        <span className="chip meta">{thread ? `No.${thread}` : "No thread"}</span>
-        <button className="ui-btn" onClick={() => { if (window.confirm("全サイトのお気に入り・閲覧履歴・非表示設定を削除しますか？")) { navigation.current++; clearLibrary(); setTabs([]); setTabNotice(""); setBoard(null); setThread(null); setListBoard(null); } }}>閲覧データを消去</button>
+        <span className="chip meta">{savedDoc ? `保存 /${savedDoc.board}/` : board ? `/${board}/` : "No board"}</span>
+        <span className="chip meta">{savedDoc ? `No.${savedDoc.thread}` : thread ? `No.${thread}` : "No thread"}</span>
+        <button className="ui-btn" disabled={clearing} onClick={async () => {
+          if (!window.confirm("全サイトのお気に入り・閲覧履歴・非表示設定・保存済み本文・タブを削除しますか？")) return;
+          setClearing(true);
+          try { await deleteSaved(); navigation.current++; clearLibrary(); setSavedDoc(null); setTabs([]); setTabNotice(""); setBoard(null); setThread(null); setListBoard(null); }
+          catch { setTabNotice("保存本文の消去に失敗しました。ほかの閲覧情報は消去していません。"); }
+          finally { setClearing(false); }
+        }}>閲覧データを消去</button>
       </div>
     </header>
     {tabs.length > 0 && <nav className="reader-tabs" aria-label="開いているタブ">{tabs.map(tab => {
@@ -103,8 +115,8 @@ export const App: React.FC = () => {
     {tabNotice && <p className="reader-notice" role="status">{tabNotice}</p>}
     <main className="workspace-grid">
       <section className="workspace-pane"><LibrarySidebar source={browseSource} selectedBoard={listBoard} mode={mode} onMode={setMode} onBoard={chooseBoard} /></section>
-      <section className="workspace-pane">{mode !== "board" ? <LibraryList key={mode} mode={mode} active={source + "/" + board + "/" + thread} onSelect={openTab} /> : listBoard ? <ThreadList key={browseSource + listBoard} source={browseSource} board={listBoard} onSelect={t => select(listBoard, t)} selectedThread={source === browseSource && board === listBoard ? thread : null} /> : <EmptyPane title="Select a Board" />}</section>
-      <section className="workspace-pane">{board && thread ? <ThreadView key={source + board + "/" + thread} source={source} board={board} threadId={thread} /> : <EmptyPane title="Select a Thread" />}</section>
+      <section className="workspace-pane">{mode === "saved" ? <SavedThreadList onOpen={doc => { if (navigation.current === renderedNavigation) setSavedDoc(doc); }} onDelete={key => { if (!key || savedDoc?.key === key) setSavedDoc(null); }} /> : mode !== "board" ? <LibraryList key={mode} mode={mode} active={source + "/" + board + "/" + thread} onSelect={openTab} /> : listBoard ? <ThreadList key={browseSource + listBoard} source={browseSource} board={listBoard} onSelect={t => select(listBoard, t)} selectedThread={source === browseSource && board === listBoard ? thread : null} /> : <EmptyPane title="Select a Board" />}</section>
+      <section className="workspace-pane">{savedDoc ? <SavedThreadView key={savedDoc.key + savedDoc.savedAt} doc={savedDoc} onClose={() => setSavedDoc(null)} /> : board && thread ? <ThreadView key={source + board + "/" + thread} source={source} board={board} threadId={thread} /> : <EmptyPane title="Select a Thread" />}</section>
     </main>
     {status && <footer className="status-bar panel-surface">
       <div className="flex items-center justify-between gap-4"><span className="meta">Save Status</span><span>{Math.round(progress)}%</span></div>

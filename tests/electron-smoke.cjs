@@ -28,6 +28,9 @@ global.fetch = async (url, options) => {
   return Response.json({ translations: [{ text: 'smoke translation' }] });
 };
 let fiveImageReads = 0;
+let networkReads = 0;
+let externalPrompts = 0, allowExternal = false;
+const externalOpened = [];
 const fivePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB9sAAAAASUVORK5CYII=', 'base64');
 let dialogCalls = 0;
 let downloadCalls = 0;
@@ -39,6 +42,7 @@ class HiddenWindow extends electron.BrowserWindow {
 }
 Module._load = function (name, ...args) {
   if (name === './network') return { ...originalLoad.call(this, name, ...args), getBytes: async url => {
+    networkReads++;
     if (url === 'https://menu.5ch.io/bbsmenu.html') return { status: 200, headers: {}, body: Buffer.from('<a href="https://egg.5ch.io/software/">Software</a>') };
     if (url.endsWith('/software/subject.txt')) return { status: 200, headers: {}, body: Buffer.from('1608930977.dat<>RIFT fixture (3)\n') };
     if (url.endsWith('/software/dat/1608930977.dat')) return { status: 200, headers: {}, body: Buffer.from('Alice<><>2026 ID:ONE<>hello https://i.ibb.co/abc1234/fixture.png<>fixture\nBob<><>2026 ID:TWO<>&gt;&gt;1 second https://i.ibb.co/abc1234/fixture.png<>\nCarol<><>2026 ID:THREE<>last<>\n') };
@@ -47,11 +51,12 @@ Module._load = function (name, ...args) {
   } };
 
   if (name === './services') return { ...originalLoad.call(this, name, ...args), downloadImage: async () => { downloadCalls++; if (downloadCalls <= 3) throw new Error('Fixture download failure'); } };
-  return name === 'electron' ? { ...electron, BrowserWindow: HiddenWindow, dialog: { showOpenDialog: async () => { dialogCalls++; await new Promise(r => setTimeout(r, 100)); return { canceled: cancelSave, filePaths: cancelSave ? [] : [process.env.SMOKE_USER_DATA] }; } } } : originalLoad.call(this, name, ...args);
+  return name === 'electron' ? { ...electron, BrowserWindow: HiddenWindow, shell: { openExternal: async url => { externalOpened.push(url); } }, dialog: { showMessageBox: async options => { assert.equal(options.message, "外部サイトへ遷移します"); externalPrompts++; return { response: allowExternal ? 1 : 0 }; }, showOpenDialog: async () => { dialogCalls++; await new Promise(r => setTimeout(r, 100)); return { canceled: cancelSave, filePaths: cancelSave ? [] : [process.env.SMOKE_USER_DATA] }; } } } : originalLoad.call(this, name, ...args);
 };
 const timeout = setTimeout(() => { console.error('Smoke test timed out'); app.exit(1); }, 60000);
 app.whenReady().then(() => {
   session.defaultSession.protocol.handle('https', async request => {
+    networkReads++;
     const url = new URL(request.url);
     const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
     if (url.hostname === 'a.4cdn.org') {
@@ -63,7 +68,7 @@ app.whenReady().then(() => {
         return new Response(JSON.stringify([{ threads: [{ no, sub: board + ' &amp; test', com: 'hello', tim: no }] }]), { headers });
       }
       if (url.pathname.endsWith('/archive.json')) return new Response('[]', { headers });
-      return new Response(JSON.stringify({ posts: Array.from({ length: 16 }, (_, i) => ({ no: no + i, com: i === 0 ? 'hello' : 'A &amp; B<br>Read position fixture ' + i, tim: no + i, ext: '.jpg' })) }), { headers });
+      return new Response(JSON.stringify({ posts: Array.from({ length: 16 }, (_, i) => ({ no: no + i, com: i === 0 ? 'hello https://example.test/thread?x=1&amp;y=2' : 'A &amp; B<br>Read position fixture ' + i, tim: no + i, ext: '.jpg' })) }), { headers });
     }
     if (url.hostname === 'i.4cdn.org') return new Response('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#17394a"/><circle cx="320" cy="240" r="100" fill="#62ddff"/></svg>', { headers: { 'Content-Type': 'image/svg+xml' } });
     return new Response('', { status: 404 });
@@ -314,6 +319,78 @@ app.whenReady().then(() => {
           if (!document.querySelector('.saved-thread-open').textContent.includes('fixture')) throw new Error('Favorite title not restored');
           if (JSON.parse(localStorage.getItem('rift.library.v2')).historyEnabled !== false) throw new Error('History setting not restored');
         })()`);
+
+        await run(`window.waitFor = async (test) => { const end = Date.now() + 12000; while (!test()) { if (Date.now() > end) throw new Error('Saved UI timeout'); await new Promise(r => setTimeout(r, 25)); } }; window.confirm = () => true; true;`);
+        await run(`(async () => {
+          if (document.querySelector('.library-board-row').getBoundingClientRect().height > 40) throw new Error('Favorite board not compact');
+          document.querySelector('.save-thread-text').click();
+          await waitFor(() => document.querySelectorAll('.library-nav-item')[2].textContent.includes('1'));
+          await waitFor(() => !document.querySelector('.save-thread-text').disabled);
+          document.querySelector('.save-thread-text').click();
+          await waitFor(() => !document.querySelector('.save-thread-text').disabled);
+          document.querySelectorAll('.library-nav-item')[2].click();
+          await waitFor(() => document.querySelector('.saved-thread-open'));
+          if (document.querySelectorAll('.saved-thread').length !== 1) throw new Error('Snapshot overwrite duplicated entry');
+        })()`);
+        const readsBeforeOffline = networkReads;
+        await run(`(async () => {
+          document.querySelector('.saved-thread-open').click();
+          await waitFor(() => document.querySelector('.offline-thread'));
+          if (document.querySelectorAll('.offline-thread .post-card').length !== 3 || document.querySelector('.offline-thread img')) throw new Error('Offline snapshot content');
+          if (!document.querySelector('.offline-thread').textContent.includes('hello')) throw new Error('Offline text missing');
+          document.querySelector('.offline-thread .external-link').click();
+        })()`);
+        await new Promise(r => setTimeout(r, 150));
+        assert.equal(networkReads, readsBeforeOffline);
+        assert.equal(externalPrompts, 1); assert.equal(externalOpened.length, 0);
+        allowExternal = true;
+        await run("document.querySelector('.offline-thread .external-link').click()");
+        await new Promise(r => setTimeout(r, 150));
+        assert.equal(externalPrompts, 2); assert.deepEqual(externalOpened, ['https://i.ibb.co/abc1234/fixture.png']);
+        assert.ok((await run("window.electron.openExternal('file:///C:/private')")).error);
+        assert.equal(externalPrompts, 2);
+        win.setSize(1401, 901); await new Promise(r => setTimeout(r, 100)); win.setSize(1400, 900); await new Promise(r => setTimeout(r, 200));
+        fs.writeFileSync(path.join(outputDir, 'rift-saved-thread.png'), (await win.webContents.capturePage()).toPNG());
+        win.setSize(390, 844); await new Promise(r => setTimeout(r, 150));
+        assert.equal(await run('document.documentElement.scrollWidth <= window.innerWidth'), true);
+        fs.writeFileSync(path.join(outputDir, 'rift-saved-thread-mobile.png'), (await win.webContents.capturePage()).toPNG());
+        win.setSize(1400, 900);
+        await new Promise(resolve => { win.webContents.once('did-finish-load', resolve); win.reload(); });
+        await run(`(async () => {
+          window.waitFor = async test => { const end = Date.now() + 12000; while (!test()) { if (Date.now() > end) throw new Error('Saved restore timeout'); await new Promise(r => setTimeout(r, 25)); } };
+          window.confirm = () => true;
+          await waitFor(() => document.querySelectorAll('.library-nav-item')[2]?.textContent.includes('1'));
+          document.querySelectorAll('.library-nav-item')[2].click();
+          await waitFor(() => document.querySelector('.saved-thread-open'));
+          document.querySelector('.saved-thread-open').click();
+          await waitFor(() => document.querySelector('.offline-thread'));
+          document.querySelector('.saved-thread-actions button').click();
+          await waitFor(() => !document.querySelector('.saved-thread') && !document.querySelector('.offline-thread'));
+          await waitFor(() => document.querySelector('.save-thread-text'));
+          document.querySelector('.save-thread-text').click();
+          await waitFor(() => document.querySelectorAll('.library-nav-item')[2].textContent.includes('1'));
+          [...document.querySelectorAll('button')].find(b => b.textContent.includes('閲覧データを消去')).click();
+          await waitFor(() => !document.querySelector('.reader-tab') && document.querySelectorAll('.library-nav-item')[2].textContent.includes('0'));
+          const db = await new Promise((resolve, reject) => { const r = indexedDB.open('rift.saved-threads.v1', 1); r.onsuccess = () => resolve(r.result); r.onerror = reject; });
+          const count = await new Promise(resolve => { const r = db.transaction('threads').objectStore('threads').count(); r.onsuccess = () => resolve(r.result); });
+          db.close(); if (count !== 0) throw new Error('Clear left saved bodies behind');
+          document.querySelector('[data-source="4chan"]').click();
+          await waitFor(() => document.querySelector('.board-item')?.textContent.includes('/g/'));
+          document.querySelector('.board-item').click();
+          await waitFor(() => document.querySelector('.thread-card'));
+          document.querySelector('.thread-card').click();
+          await waitFor(() => document.querySelector('.save-thread-text'));
+          if (!document.querySelector('.post-body .external-link').href.includes('x=1&y=2')) throw new Error('4chan URL decoding');
+          document.querySelector('.save-thread-text').click();
+          await waitFor(() => document.querySelectorAll('.library-nav-item')[2].textContent.includes('1'));
+          document.querySelectorAll('.library-nav-item')[2].click();
+          await waitFor(() => document.querySelector('.saved-thread-open'));
+          document.querySelector('.saved-thread-open').click();
+          await waitFor(() => document.querySelector('.offline-thread'));
+          if (document.querySelectorAll('.offline-thread .post-card').length !== 16 || !document.querySelectorAll('.offline-thread .post-body')[1].textContent.includes('A & B')) throw new Error('4chan snapshot encoding');
+
+        })()`);
+        console.log('PASS: offline save/overwrite/reload/delete/clear, no offline network, compact boards, confirmed external links, mobile layout');
         console.log('PASS: library favorites/history/search/delete/pause/restore + 4chan regression + RIFT 5ch boards/threads/posts, references, image consent/dedup/blob preview/safe save, ID filters, URL import and site isolation');
         clearTimeout(timeout);
         app.exit(0);

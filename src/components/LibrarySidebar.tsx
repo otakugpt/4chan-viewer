@@ -1,12 +1,14 @@
 import React, { useState } from "react";
 import { BoardList } from "./BoardList";
 import { boardName, favoriteBoards, moveBoard, toggleFavorite, useLibraries } from "../lib/library";
-export type LibraryMode = "favorites" | "history" | "board";
+import { useSavedThreads } from "../lib/savedThreads";
+export type LibraryMode = "favorites" | "history" | "board" | "saved";
 export function LibrarySidebar({ source, selectedBoard, mode, onMode, onBoard }: {
   source: BoardSource; selectedBoard: string | null; mode: LibraryMode;
   onMode: (mode: LibraryMode) => void; onBoard: (source: BoardSource, board: string) => void;
 }) {
   const data = useLibraries();
+  const saved = useSavedThreads();
   const [expanded, setExpanded] = useState(true);
   const boards = favoriteBoards();
   const favoriteCount = data.sites['4chan'].threads.length + data.sites['5ch'].threads.length;
@@ -16,6 +18,7 @@ export function LibrarySidebar({ source, selectedBoard, mode, onMode, onBoard }:
     <nav className="library-nav" aria-label="ライブラリ">
       <button className={`library-nav-item ${mode === 'favorites' ? 'is-active' : ''}`} aria-pressed={mode === 'favorites'} onClick={() => onMode('favorites')}>お気に入りスレッド <span>{favoriteCount}</span></button>
       <button className={`library-nav-item ${mode === 'history' ? 'is-active' : ''}`} aria-pressed={mode === 'history'} onClick={() => onMode('history')}>閲覧履歴 <span>{historyCount}</span></button>
+      <button className={`library-nav-item ${mode === "saved" ? "is-active" : ""}`} aria-pressed={mode === "saved"} onClick={() => onMode("saved")}>保存済みスレッド <span>{saved.items.length}</span></button>
     </nav>
     <div className="library-sidebar-scroll">
       <section className="library-boards" aria-label="お気に入り板">
@@ -25,7 +28,7 @@ export function LibrarySidebar({ source, selectedBoard, mode, onMode, onBoard }:
           const [site, board] = id.split('/') as [BoardSource, string];
           const name = boardName(site, board);
           return <div className="library-board-row" key={id}>
-            <button className="library-board-link" aria-current={mode === 'board' && source === site && selectedBoard === board ? 'page' : undefined} onClick={() => onBoard(site, board)}><span>{name}</span><small>{site} /{board}/</small></button>
+            <button title={name + " / " + site + " /" + board + "/"} className="library-board-link" aria-current={mode === 'board' && source === site && selectedBoard === board ? 'page' : undefined} onClick={() => onBoard(site, board)}><span>{name}</span><small>{site}</small></button>
             <div className="library-board-tools">
               <button className="ui-btn" disabled={index === 0} aria-label={name + ' を上へ'} onClick={() => moveBoard(id, -1)}>↑</button>
               <button className="ui-btn" disabled={index === boards.length - 1} aria-label={name + ' を下へ'} onClick={() => moveBoard(id, 1)}>↓</button>

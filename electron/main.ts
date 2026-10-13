@@ -1,10 +1,12 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import path from "path";
 import fs from "fs";
 import { pathToFileURL } from "node:url";
 import { downloadImage, isTrustedDocument, normalizeDownloadUrl, translateText } from "./services";
 import { fiveRequest } from "./five";
 import { normalizeFiveImage, imageFilename, readFiveImage, downloadFiveImage } from "./five-media";
+
+import { confirmExternal } from "./external";
 
 const DOWNLOAD_DELAY_MS = 500;
 const DOWNLOAD_RETRY_COUNT = 3;
@@ -17,6 +19,8 @@ function trustedSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEven
   return Boolean(expected && frame && frame === event.sender.mainFrame &&
     isTrustedDocument(frame.url, expected));
 }
+
+ipcMain.handle("open-external", (event, url: unknown) => trustedSender(event) ? confirmExternal(url) : { opened: false, error: "Unauthorized request" });
 
 ipcMain.handle("five-request", (event, request: unknown) => trustedSender(event)
   ? fiveRequest(request) : { error: "Unauthorized request" });
@@ -104,9 +108,7 @@ function createWindow() {
   win.webContents.on("will-redirect", event => event.preventDefault());
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http://") || url.startsWith("https://")) {
-      void shell.openExternal(url);
-    }
+    if (isTrustedDocument(win.webContents.mainFrame.url, trustedUrl)) void confirmExternal(url);
     return { action: "deny" };
   });
 

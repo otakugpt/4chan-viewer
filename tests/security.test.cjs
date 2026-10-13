@@ -126,11 +126,13 @@ test('main IPC checks window, document and main frame and serializes translation
   await Promise.resolve();
   const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
   const invoke = handlers['translate-text'];
+  for (const untrusted of [{ ...event, senderFrame: null }, { ...event, senderFrame: { url: event.senderFrame.url } }, { ...event, sender: { id: 999 } }]) assert.match((await handlers['open-external'](untrusted, 'https://example.test')).error, /Unauthorized/);
   assert.match((await invoke({ ...event, senderFrame: null }, 'hello')).error, /Unauthorized/);
   assert.match((await invoke({ ...event, senderFrame: { url: event.senderFrame.url } }, 'hello')).error, /Unauthorized/);
   assert.match((await invoke({ ...event, sender: { id: 999 } }, 'hello')).error, /Unauthorized/);
   const actual = event.senderFrame.url;
   event.senderFrame.url = 'https://evil.test/';
+  assert.match((await handlers['open-external'](event, 'https://example.test')).error, /Unauthorized/);
   assert.match((await invoke(event, 'hello')).error, /Unauthorized/);
   await handlers['save-images'](event, [{ url: 'https://i.4cdn.org/g/123.jpg' }]);
   event.senderFrame.url = actual;
@@ -209,4 +211,29 @@ test('save IPC returns cancellation, prevents overlap, releases locks and identi
   assert.equal(result.saved, 1);
   assert.deepEqual(result.failedTargets, [bad]);
   assert.equal(calls.length, 4);
+});
+
+test('external links validate destinations and require explicit confirmation', async () => {
+  const opened = []; let response = 0; let prompts = 0; let release;
+  const external = load('external', { electron: {
+    dialog: { showMessageBox: async options => { prompts++; assert.equal(options.message, '外部サイトへ遷移します'); assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0); if (release) await new Promise(resolve => { release = resolve; }); return { response }; } },
+    shell: { openExternal: async url => { opened.push(url); } }
+  } });
+  for (const url of [null, {}, 'file:///C:/private', 'javascript:alert(1)', 'data:text/html,hi', 'https://u:p@example.test/', 'https://example.test/\n', 'https://example.test/\u202e', 'https://example.test/' + 'x'.repeat(4096)]) {
+    assert.equal(external.externalUrl(url), null);
+    assert.equal((await external.confirmExternal(url)).opened, false);
+  }
+  assert.equal(prompts, 0);
+  assert.equal((await external.confirmExternal('https://example.test')).opened, false);
+  assert.equal(opened.length, 0);
+  response = 1;
+  assert.equal((await external.confirmExternal('https://example.test')).opened, true);
+  assert.deepEqual(opened, ['https://example.test/']);
+  release = true;
+  const pending = external.confirmExternal('https://example.test/next');
+  assert.equal((await external.confirmExternal('https://example.test/duplicate')).opened, false);
+  release(); await pending;
+  assert.equal(opened.length, 2);
+  const failing = load('external', { electron: { dialog: { showMessageBox: async () => ({ response: 1 }) }, shell: { openExternal: async () => { throw new Error('private detail'); } } } });
+  assert.equal((await failing.confirmExternal('https://example.test')).error.includes('private'), false);
 });

@@ -150,3 +150,13 @@ test('favorite board order spans both sites and title metadata is bounded and te
   assert.equal(lib.getLibrary('5ch').metadata['software/1608930977'].title.length, 300);
   assert.equal(lib.getLibrary('5ch').metadata['software/1608930977'].title.includes('<'), false);
 });
+
+test('saved thread validation bounds data and keeps only approved text fields', () => {
+  const { validateSaved } = load('src/lib/savedThreads.ts', { TextEncoder });
+  const doc = { key: 'untrusted', source: '5ch', board: 'software', thread: 1608930977, title: 'title', savedAt: 1, secret: 'discard', posts: [{ no: 1, name: 'name', date: '', id: '', com: 'body', media: ['https://example.test/image.jpg'] }] };
+  const value = validateSaved(doc);
+  assert.equal(value.key, '5ch/software/1608930977');
+  assert.equal(value.secret, undefined);
+  assert.equal(value.posts[0].media, undefined);
+  for (const invalid of [null, { ...doc, source: 'evil' }, { ...doc, board: '../bad' }, { ...doc, thread: 1 }, { ...doc, savedAt: NaN }, { ...doc, posts: [] }, { ...doc, posts: [doc.posts[0], doc.posts[0]] }, { ...doc, title: 'x'.repeat(301) }, { ...doc, posts: [{ ...doc.posts[0], com: 'x'.repeat(8 * 1024 * 1024) }] }]) assert.throws(() => validateSaved(invalid));
+});

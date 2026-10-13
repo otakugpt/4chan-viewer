@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSave } from "./SaveProvider";
 import { MediaViewer, MediaItem } from "./MediaViewer";
 import { RemoteImage } from "./RemoteImage";
+import { UrlText } from "./UrlText";
+import { saveThread } from "../lib/savedThreads";
 import { ReplyText } from "./ReplyText";
 import { TranslateButton } from "./TranslateButton";
 import { providers, imageBase } from "../lib/providers";
@@ -12,6 +14,8 @@ type Media = MediaItem & { target: ImageTarget };
 export function ThreadView({ source, board, threadId }: { source: BoardSource; board: string; threadId: number }) {
   const provider = providers[source];
   const [posts, setPosts] = useState<PostInfo[]>([]);
+  const currentPosts = useRef<PostInfo[]>([]);
+  const [savingText, setSavingText] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -46,7 +50,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
   useEffect(() => {
     const controller = new AbortController(); requests.current = controller;
     provider.posts(board, threadId, controller.signal).then(data => {
-      if (!controller.signal.aborted) { markVisit(data); setPosts(data); }
+      if (!controller.signal.aborted) { markVisit(data); currentPosts.current = data; setPosts(data); }
     }).catch(e => { if (!controller.signal.aborted) setError(e.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -117,11 +121,21 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
         if (!signal.aborted) {
           const max = Math.max(0, ...posts.map(p => p.no));
           setNotice(`新着 ${data.filter(p => p.no > max).length} 件${source === "5ch" ? "（更新間隔は最低10秒）" : ""}`);
-          markVisit(data); setPosts(data); setLoadedIds([threadId]); setError(""); setNoMoreOlder(false); setViewer(null);
+          markVisit(data); currentPosts.current = data; setPosts(data); setLoadedIds([threadId]); setError(""); setNoMoreOlder(false); setViewer(null);
         }
       }
     } catch (e) { if (!signal.aborted) setNotice(e instanceof Error ? e.message : "取得に失敗しました。"); }
     finally { refreshLock.current = false; if (!signal.aborted) setRefreshing(false); }
+  };
+  const saveText = async () => {
+    if (!window.confirm("取得済みのこのスレッド本文をPC内に保存します（画像・訳文は含みません）。既存の保存本文がある場合は更新します。")) return;
+    setSavingText(true); setNotice("");
+    try {
+      await saveThread({ key: "", source, board, thread: threadId, title: (library.metadata[readingKey]?.title || plainText(currentPosts.current[0]?.sub ?? "") || readingKey).slice(0, 300), savedAt: Date.now(),
+        posts: currentPosts.current.map(p => ({ no: p.no, name: plainText(p.name ?? ""), date: plainText(p.date ?? ""), id: p.id ?? "", com: plainText(p.com ?? "") })) });
+      setNotice("本文を保存しました。左の「保存済みスレッド」から読めます。");
+    } catch (e) { setNotice(e instanceof Error ? e.message : "本文を保存できませんでした。"); }
+    finally { setSavingText(false); }
   };
   const save = (media: Media[]) => { if (!remote || consent) void saveMedia(media.map(m => m.target)); };
   if (loading) return <div className="panel-surface pane-flex"><div className="load-state">Loading thread...</div></div>;
@@ -135,6 +149,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
           <button className={`ui-btn ${viewMode === "thread" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("thread")}>Thread</button>
           <button className={`ui-btn ${viewMode === "gallery" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("gallery")}>Gallery</button>
           <button className="ui-btn" disabled={refreshing} onClick={() => refresh()}>更新</button>
+          <button className="ui-btn save-thread-text" disabled={savingText || refreshing} onClick={() => void saveText()}>{savingText ? "本文保存中…" : "本文を保存"}</button>
           <button className="ui-btn ui-btn--primary" disabled={busy || !mediaList.length || (remote && !consent)} onClick={() => save(mediaList)}>{busy ? "保存中…" : "Save all"}</button>
         </div>
       </div>
@@ -162,7 +177,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
             <button className="post-image-link" aria-label={`投稿 ${post.no} の画像を拡大`} onClick={() => setViewer(mediaList.indexOf(media))}><img className="post-thumb" src={media.thumb} alt={`post-${post.no}`} /></button>
             <div className="flex gap-2"><button className="ui-btn ui-btn--primary ui-btn--small" disabled={busy} onClick={() => save([media])}>Save image</button><a className="ui-btn" href={media.full} target="_blank" rel="noopener noreferrer">Open full</a></div>
           </div>}
-          <div className={`post-body mt-3 whitespace-pre-wrap text-sm leading-relaxed ${aa ? "aa-body" : ""}`}>{provider.capabilities.references ? <ReplyText text={text} posts={visiblePosts} onJump={jump} /> : text || "(no comment)"}</div>
+          <div className={`post-body mt-3 whitespace-pre-wrap text-sm leading-relaxed ${aa ? "aa-body" : ""}`}>{provider.capabilities.references ? <ReplyText text={text} posts={visiblePosts} onJump={jump} /> : <UrlText text={text || "(no comment)"} />}</div>
           {remote && (post.media?.length ?? 0) > 0 && <button className="ui-btn mt-2" onClick={() => { setViewMode("gallery"); setPage(Math.floor(Math.max(0, mediaList.findIndex(m => m.postNo === post.no)) / pageSize)); }}>画像 {post.media!.length} 件を一覧で見る</button>}
           {provider.capabilities.translation && post.com && <TranslateButton text={text} className="mt-3" />}
         </article>;
