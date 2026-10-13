@@ -6,7 +6,7 @@ import { ReplyText } from "./ReplyText";
 import { TranslateButton } from "./TranslateButton";
 import { providers, imageBase } from "../lib/providers";
 import { plainText } from "../lib/text";
-import { getLibrary, getClearEpoch, rememberReading, toggleFavorite, useLibrary, setFilters } from "../lib/library";
+import { recordVisit, getHistoryEpoch, getLibrary, getClearEpoch, rememberReading, toggleFavorite, useLibrary, setFilters } from "../lib/library";
 
 type Media = MediaItem & { target: ImageTarget };
 export function ThreadView({ source, board, threadId }: { source: BoardSource; board: string; threadId: number }) {
@@ -34,6 +34,11 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
   const [idsDraft, setIdsDraft] = useState(library.filters.ids.join("\n"));
   useEffect(() => { setWordsDraft(library.filters.words.join("\n")); setIdsDraft(library.filters.ids.join("\n")); }, [library.filters]);
   const readingKey = board + "/" + threadId;
+  const visitEpoch = useRef(getHistoryEpoch(source, readingKey));
+  const visited = useRef(false);
+  const markVisit = (data: PostInfo[]) => {
+    if (!visited.current) { recordVisit(readingKey, source, plainText(data[0]?.sub ?? ""), visitEpoch.current); visited.current = true; }
+  };
   const initialReading = useRef(getLibrary(source).reads[readingKey]);
   const lastScroll = useRef(initialReading.current?.scroll ?? 0);
   const { busy, save: saveMedia } = useSave();
@@ -41,7 +46,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
   useEffect(() => {
     const controller = new AbortController(); requests.current = controller;
     provider.posts(board, threadId, controller.signal).then(data => {
-      if (!controller.signal.aborted) setPosts(data);
+      if (!controller.signal.aborted) { markVisit(data); setPosts(data); }
     }).catch(e => { if (!controller.signal.aborted) setError(e.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -59,7 +64,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
       const visible = [...pane.querySelectorAll<HTMLElement>("[data-post]")].filter(el => el.getBoundingClientRect().top < bottom);
       lastPost = Number(visible[visible.length - 1]?.dataset.post ?? 0); lastScroll.current = pane.scrollTop;
     };
-    const record = () => { if (epoch === getClearEpoch()) rememberReading(readingKey, lastPost, lastScroll.current, source); };
+    const record = () => { if (epoch === getClearEpoch() && visitEpoch.current === getHistoryEpoch(source, readingKey)) rememberReading(readingKey, lastPost, lastScroll.current, source); };
     const scroll = () => { sample(); clearTimeout(timer); timer = setTimeout(record, 250); };
     sample(); record(); pane.addEventListener("scroll", scroll); window.addEventListener("beforeunload", record);
     return () => { clearTimeout(timer); record(); pane.removeEventListener("scroll", scroll); window.removeEventListener("beforeunload", record); };
@@ -112,7 +117,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
         if (!signal.aborted) {
           const max = Math.max(0, ...posts.map(p => p.no));
           setNotice(`新着 ${data.filter(p => p.no > max).length} 件${source === "5ch" ? "（更新間隔は最低10秒）" : ""}`);
-          setPosts(data); setLoadedIds([threadId]); setError(""); setNoMoreOlder(false); setViewer(null);
+          markVisit(data); setPosts(data); setLoadedIds([threadId]); setError(""); setNoMoreOlder(false); setViewer(null);
         }
       }
     } catch (e) { if (!signal.aborted) setNotice(e instanceof Error ? e.message : "取得に失敗しました。"); }
@@ -124,9 +129,9 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
 
   return <div className="panel-surface pane-flex">
     <div className="panel-header">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="panel-title">/{board}/ No.{threadId}</h2><p className="meta mt-1 text-[11px] text-slate-400">{source} · Posts {posts.length} / Images {mediaList.length}</p></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="panel-title thread-heading">{library.metadata[readingKey]?.title || `/${board}/ No.${threadId}`}</h2><p className="meta mt-1 text-[11px] text-slate-400">{source} · Posts {posts.length} / Images {mediaList.length}</p></div>
         <div className="flex flex-wrap gap-2">
-          <button className="ui-btn" aria-pressed={library.threads.includes(readingKey)} onClick={() => toggleFavorite("threads", readingKey, source)}>{library.threads.includes(readingKey) ? "お気に入り解除" : "お気に入り"}</button>
+          <button className="ui-btn" aria-pressed={library.threads.includes(readingKey)} onClick={() => toggleFavorite("threads", readingKey, source, plainText(posts[0]?.sub ?? ""))}>{library.threads.includes(readingKey) ? "お気に入り解除" : "お気に入り"}</button>
           <button className={`ui-btn ${viewMode === "thread" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("thread")}>Thread</button>
           <button className={`ui-btn ${viewMode === "gallery" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("gallery")}>Gallery</button>
           <button className="ui-btn" disabled={refreshing} onClick={() => refresh()}>更新</button>

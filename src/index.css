@@ -641,3 +641,46 @@ input[type=checkbox] { accent-color: var(--accent); margin-right: 5px; }
 .reader-tab .ui-btn:first-child { max-width: 250px; overflow: hidden; text-overflow: ellipsis; }
 .reader-tab--active { border-color: var(--accent-strong); }
 .reader-tab--active .ui-btn { background: rgba(20, 119, 104, .35); }
+/* Persistent library: navigation stays visible while long lists scroll locally. */
+.library-sidebar { overflow: hidden; }
+.library-nav { padding: 8px; display: grid; gap: 4px; flex-shrink: 0; }
+.library-nav-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 11px 10px; border: 1px solid transparent; border-radius: 9px; text-align: left; font-size: .82rem; font-weight: 600; background: transparent; cursor: pointer; }
+.library-nav-item span { color: var(--text-soft); font-size: .75rem; }
+.library-nav-item.is-active, .library-board-link[aria-current=page] { border-color: var(--accent-strong); background: rgba(20, 119, 104, .16); }
+.library-sidebar-scroll { overflow-y: auto; flex: 1; min-height: 0; }
+.library-boards { margin: 4px 10px 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.library-boards h3 { font-size: .82rem; font-weight: 600; margin: 0 0 8px; }
+.library-hint { color: var(--text-soft); font-size: .72rem; line-height: 1.6; margin: 8px 0; }
+.library-board-row { padding: 3px 0 8px; border-bottom: 1px solid rgba(128, 167, 255, .12); }
+.library-board-link { width: 100%; display: flex; flex-direction: column; gap: 4px; text-align: left; border: 1px solid transparent; padding: 8px; border-radius: 8px; cursor: pointer; }
+.library-board-link span { font-size: .85rem; overflow-wrap: anywhere; }
+.library-board-link small { font-size: .68rem; color: var(--text-soft); }
+.library-board-tools { display: flex; gap: 4px; justify-content: flex-end; }
+.library-board-tools .ui-btn { font-size: .66rem; padding: 5px 7px; min-height: 26px; }
+.all-boards { margin: 0 8px 8px; border-top: 1px solid var(--border); }
+.all-boards > summary { cursor: pointer; padding: 12px 4px; font-size: .8rem; font-weight: 600; }
+.all-boards > summary span { color: var(--text-soft); margin-left: 6px; }
+.all-boards .panel-surface { height: auto; border: 0; border-radius: 0; background: none; box-shadow: none; backdrop-filter: none; }
+.all-boards .panel-header { padding: 4px 0 8px; background: none; }
+.all-boards .panel-header h2, .all-boards .panel-header .meta { display: none; }
+.all-boards .list-scroll { overflow: visible; padding: 0; }
+.all-boards .board-item { margin-bottom: 4px; }
+.library-list-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.library-list-tools select { min-width: 0; max-width: 100%; padding: 6px 8px; font-size: .75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-deep); color: var(--text-primary); }
+.history-options { margin-top: 8px; font-size: .75rem; }
+.history-options summary { cursor: pointer; }
+.history-options label { display: block; margin-top: 8px; }
+.history-day { margin: 8px 2px; font-size: .78rem; font-weight: 600; color: var(--text-soft); }
+.saved-thread { border: 1px solid var(--border); background: var(--surface-soft); border-radius: 11px; margin-bottom: 8px; overflow: hidden; }
+.saved-thread.is-active { border-color: var(--accent-strong); }
+.saved-thread-open { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 12px; text-align: left; cursor: pointer; }
+.saved-thread-open strong { font-size: .85rem; line-height: 1.45; overflow-wrap: anywhere; }
+.saved-thread-open span { font-size: .72rem; color: #b2d3ec; }
+.saved-thread-open small { font-size: .67rem; color: var(--text-soft); }
+.saved-thread-actions { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 12px 10px; }
+.saved-thread-actions .ui-btn { font-size: .68rem; min-height: 28px; }
+.library-nav-item:hover, .library-board-link:hover, .saved-thread-open:hover { background: rgba(98, 221, 255, .07); }
+.library-sidebar button:focus-visible, .saved-thread-open:focus-visible, summary:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.thread-heading { overflow-wrap: anywhere; }
+@media (min-width: 1081px) { .workspace-grid { grid-template-columns: minmax(210px, .8fr) minmax(300px, 1.2fr) minmax(390px, 1.9fr); } }
+@media (max-width: 680px) { .library-board-tools .ui-btn, .saved-thread-actions .ui-btn { min-height: 34px; } }

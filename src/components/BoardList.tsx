@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-import { useLibrary, toggleFavorite } from "../lib/library";
+import { rememberBoards, useLibrary, toggleFavorite } from "../lib/library";
 
 import { providers } from "../lib/providers";
 
@@ -35,7 +35,7 @@ export const BoardList: React.FC<BoardListProps> = ({
         if (!Array.isArray(data)) {
           throw new Error("Invalid response structure");
         }
-        setBoards(data);
+        setBoards(data); rememberBoards(data, source);
       })
       .catch((err) => {
         if (controller.signal.aborted) return;

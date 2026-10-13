@@ -158,7 +158,7 @@ app.whenReady().then(() => {
           const end = Date.now() + 8000;
           while (!document.querySelector('.post-card')) { if (Date.now() > end) throw new Error('Resume timeout'); await new Promise(r => setTimeout(r, 25)); }
           await new Promise(r => setTimeout(r, 300));
-          if (!document.querySelector('.favorite-strip').textContent.includes('a/200')) throw new Error('Favorite not restored');
+          if (!JSON.parse(localStorage.getItem('rift.library.v2')).sites['4chan'].threads.includes('a/200')) throw new Error('Favorite not restored');
           if (document.querySelector('.post-card').parentElement.scrollTop < 500) throw new Error('Position not restored');
           window.confirm = () => true;
           [...document.querySelectorAll('button')].find(b => b.textContent.includes('閲覧データを消去')).click();
@@ -252,7 +252,69 @@ app.whenReady().then(() => {
           await new Promise(r => setTimeout(r, 100));
           if (document.querySelector('.reader-tab') || JSON.parse(localStorage.getItem('rift.tabs.v1')).tabs.length) throw new Error('Tab history not cleared');
         })()`);
-        console.log('PASS: 4chan regression + RIFT 5ch boards/threads/posts, references, image consent/dedup/blob preview/safe save, ID filters, URL import and site isolation');
+        await run(`window.waitFor = async (test) => { const end = Date.now() + 12000; while (!test()) { if (Date.now() > end) throw new Error('Library UI timeout'); await new Promise(r => setTimeout(r, 25)); } }; true;`);
+        await run(`(async () => {
+          document.querySelector('[data-source="5ch"]').click();
+          await waitFor(() => document.querySelector('.board-item')?.textContent.includes('software'));
+          document.querySelector('.favorite-board').click();
+          await waitFor(() => document.querySelector('.library-board-link'));
+          document.querySelector('.library-board-link').click();
+          await waitFor(() => document.querySelector('.thread-card'));
+          document.querySelector('.thread-card').click();
+          await waitFor(() => document.querySelectorAll('.post-card').length === 3);
+          [...document.querySelectorAll('.panel-header button')].find(b => b.textContent === 'お気に入り').click();
+          document.querySelectorAll('.library-nav-item')[0].click();
+          await waitFor(() => document.querySelector('.saved-thread-open')?.textContent.includes('fixture'));
+          if (document.querySelectorAll('.post-card').length !== 3) throw new Error('Library navigation replaced reader');
+          const count = document.querySelectorAll('.reader-tab').length;
+          document.querySelector('.saved-thread-open').click();
+          await new Promise(r => setTimeout(r, 100));
+          if (document.querySelectorAll('.reader-tab').length !== count) throw new Error('Library duplicated tab');
+          const input = document.querySelector('[aria-label="保存スレッドを検索"]');
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          setter.call(input, 'not-a-title'); input.dispatchEvent(new Event('input', { bubbles: true }));
+          await waitFor(() => !document.querySelector('.saved-thread'));
+          setter.call(input, 'fixture'); input.dispatchEvent(new Event('input', { bubbles: true }));
+          await waitFor(() => document.querySelector('.saved-thread'));
+        })()`);
+        win.setSize(1401, 901); await new Promise(r => setTimeout(r, 100)); win.setSize(1400, 900); await new Promise(r => setTimeout(r, 200));
+        fs.writeFileSync(path.join(outputDir, 'rift-library.png'), (await win.webContents.capturePage()).toPNG());
+        win.setSize(390, 844); await new Promise(r => setTimeout(r, 200));
+        assert.equal(await run('document.documentElement.scrollWidth <= window.innerWidth'), true);
+        fs.writeFileSync(path.join(outputDir, 'rift-library-mobile.png'), (await win.webContents.capturePage()).toPNG());
+        win.setSize(1400, 900);
+        await run(`(async () => {
+          document.querySelectorAll('.library-nav-item')[1].click();
+          await waitFor(() => document.querySelector('.history-day'));
+          [...document.querySelectorAll('.saved-thread-actions button')].find(b => b.textContent === '履歴削除').click();
+          await waitFor(() => !document.querySelector('.saved-thread'));
+          const pane = document.querySelector('.post-card').parentElement;
+          pane.scrollTop = 200; pane.dispatchEvent(new Event('scroll'));
+          await new Promise(r => setTimeout(r, 350));
+          const saved = JSON.parse(localStorage.getItem('rift.library.v2')).sites['5ch'];
+          if (Object.keys(saved.history).length || !saved.threads.includes('software/1608930977')) throw new Error('History deletion affected favorites or resurrected history');
+          document.querySelector('.history-options').open = true;
+          document.querySelector('.history-options input').click();
+          await waitFor(() => JSON.parse(localStorage.getItem('rift.library.v2')).historyEnabled === false);
+          document.querySelector('[data-source="4chan"]').click();
+          document.querySelector('[data-source="5ch"]').click();
+          await waitFor(() => document.querySelectorAll('.post-card').length === 3);
+          await new Promise(r => setTimeout(r, 100));
+          if (Object.keys(JSON.parse(localStorage.getItem('rift.library.v2')).sites['5ch'].history).length) throw new Error('Paused history recorded visit');
+          document.querySelectorAll('.library-nav-item')[0].click();
+          await waitFor(() => document.querySelector('.saved-thread'));
+        })()`);
+        await new Promise(resolve => { win.webContents.once('did-finish-load', resolve); win.reload(); });
+        await run(`(async () => {
+          const end = Date.now() + 12000;
+          while (!document.querySelector('.post-card')) { if (Date.now() > end) throw new Error('Library reload timeout'); await new Promise(r => setTimeout(r, 25)); }
+          if (!document.querySelector('.library-board-link')) throw new Error('Favorite board not restored');
+          document.querySelectorAll('.library-nav-item')[0].click();
+          await new Promise(r => setTimeout(r, 100));
+          if (!document.querySelector('.saved-thread-open').textContent.includes('fixture')) throw new Error('Favorite title not restored');
+          if (JSON.parse(localStorage.getItem('rift.library.v2')).historyEnabled !== false) throw new Error('History setting not restored');
+        })()`);
+        console.log('PASS: library favorites/history/search/delete/pause/restore + 4chan regression + RIFT 5ch boards/threads/posts, references, image consent/dedup/blob preview/safe save, ID filters, URL import and site isolation');
         clearTimeout(timeout);
         app.exit(0);
       } catch (error) { console.error(error); app.exit(1); }

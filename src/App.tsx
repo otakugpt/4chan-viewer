@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
-import { BoardList } from "./components/BoardList";
+import { LibrarySidebar, LibraryMode } from "./components/LibrarySidebar";
+import { LibraryList } from "./components/LibraryList";
 import { ThreadList } from "./components/ThreadList";
 import { ThreadView } from "./components/ThreadView";
 import { useSave } from "./components/SaveProvider";
-import { forgetSelection, getLibrary, useLibrary, getSource, selectSource, rememberSelection, clearLibrary, toggleFavorite } from "./lib/library";
+import { forgetSelection, getLibrary, useLibrary, getSource, selectSource, rememberSelection, clearLibrary } from "./lib/library";
 
 import { loadTabs, saveTabs, tabId, MAX_TABS, ReaderTab } from "./lib/tabs";
 
@@ -12,6 +13,9 @@ export const App: React.FC = () => {
   const [source, setSource] = useState<BoardSource>(getSource);
   const [board, setBoard] = useState<string | null>(() => getLibrary(getSource()).last?.board ?? null);
   const [thread, setThread] = useState<number | null>(() => getLibrary(getSource()).last?.thread ?? null);
+  const [mode, setMode] = useState<LibraryMode>("board");
+  const [browseSource, setBrowseSource] = useState<BoardSource>(getSource);
+  const [listBoard, setListBoard] = useState<string | null>(() => getLibrary(getSource()).last?.board ?? null);
   const [tabs, setTabs] = useState<ReaderTab[]>(() => {
     const saved = loadTabs();
     const last = getLibrary(getSource()).last;
@@ -31,7 +35,7 @@ export const App: React.FC = () => {
   const { progress, status, busy, failed, save } = useSave();
   const activate = (next: BoardSource, b: string | null, t: number | null) => {
     navigation.current++; setOpening(false); setUrlError(""); setTabNotice("");
-    setSource(next); selectSource(next); setBoard(b); setThread(t);
+    setSource(next); selectSource(next); setBoard(b); setThread(t); setBrowseSource(next); setListBoard(b);
     if (b) rememberSelection(b, t, next); else forgetSelection(next);
   };
   const openTab = (next: BoardSource, b: string | null, t: number | null) => {
@@ -44,10 +48,14 @@ export const App: React.FC = () => {
     }
     activate(next, b, t);
   };
-  const select = (b: string, t: number | null) => openTab(source, b, t);
+  const select = (b: string, t: number | null) => openTab(browseSource, b, t);
+  const chooseBoard = (next: BoardSource, b: string) => {
+    navigation.current++; setOpening(false); setBrowseSource(next); setListBoard(b); setMode("board");
+    if (!thread) openTab(next, b, null);
+  };
   const changeSource = (next: BoardSource) => {
     const last = getLibrary(next).last;
-    openTab(next, last?.board ?? null, last?.thread ?? null);
+    setMode("board"); openTab(next, last?.board ?? null, last?.thread ?? null);
   };
   const closeTab = (tab: ReaderTab) => {
     const index = tabs.findIndex(item => tabId(item) === tabId(tab));
@@ -76,17 +84,17 @@ export const App: React.FC = () => {
     <header className="topbar panel-surface">
       <h1 className="topbar-title" title="RIFT（仮称）">RIFT</h1>
       <div className="topbar-meta">
-        <nav aria-label="掲示板サイト" className="flex gap-2">{(["4chan", "5ch"] as BoardSource[]).map(site => <button key={site} data-source={site} className={`ui-btn ${source === site ? "ui-btn--active" : ""}`} aria-pressed={source === site} onClick={() => changeSource(site)}>{site}</button>)}</nav>
-        {source === "5ch" && <form onSubmit={openUrl} className="url-bar"><input value={url} onChange={e => setUrl(e.target.value)} aria-label="5chのURL" placeholder="5chの板・スレッドURL（旧 .net も対応）" /><button className="ui-btn" disabled={opening || !url.trim()}>{opening ? "確認中…" : "URLを開く"}</button>{urlError && <span role="alert">{urlError}</span>}</form>}
+        <nav aria-label="掲示板サイト" className="flex gap-2">{(["4chan", "5ch"] as BoardSource[]).map(site => <button key={site} data-source={site} className={`ui-btn ${browseSource === site ? "ui-btn--active" : ""}`} aria-pressed={browseSource === site} onClick={() => changeSource(site)}>{site}</button>)}</nav>
+        {browseSource === "5ch" && <form onSubmit={openUrl} className="url-bar"><input value={url} onChange={e => setUrl(e.target.value)} aria-label="5chのURL" placeholder="5chの板・スレッドURL（旧 .net も対応）" /><button className="ui-btn" disabled={opening || !url.trim()}>{opening ? "確認中…" : "URLを開く"}</button>{urlError && <span role="alert">{urlError}</span>}</form>}
         <span className="chip meta">{board ? `/${board}/` : "No board"}</span>
         <span className="chip meta">{thread ? `No.${thread}` : "No thread"}</span>
-        <button className="ui-btn" onClick={() => { if (window.confirm("全サイトのお気に入り・閲覧履歴・非表示設定を削除しますか？")) { navigation.current++; clearLibrary(); setTabs([]); setTabNotice(""); setBoard(null); setThread(null); } }}>閲覧データを消去</button>
+        <button className="ui-btn" onClick={() => { if (window.confirm("全サイトのお気に入り・閲覧履歴・非表示設定を削除しますか？")) { navigation.current++; clearLibrary(); setTabs([]); setTabNotice(""); setBoard(null); setThread(null); setListBoard(null); } }}>閲覧データを消去</button>
       </div>
     </header>
-    {library.threads.length > 0 && <nav className="favorite-strip" aria-label="お気に入りスレッド">{library.threads.map(id => <span key={id} className="flex gap-1"><button className="ui-btn" onClick={() => { const [b, t] = id.split("/"); select(b, Number(t)); }}>{source} /{id}</button><button className="ui-btn" aria-label={id + " をお気に入りから削除"} onClick={() => toggleFavorite("threads", id, source)}>解除</button></span>)}</nav>}
     {tabs.length > 0 && <nav className="reader-tabs" aria-label="開いているタブ">{tabs.map(tab => {
       const active = source === tab.source && board === tab.board && thread === tab.thread;
-      const label = tab.source + " /" + tab.board + (tab.thread ? " / " + tab.thread : " / 板一覧");
+      const title = tab.thread ? getLibrary(tab.source).metadata[tab.board + "/" + tab.thread]?.title : "";
+      const label = tab.source + " /" + tab.board + (tab.thread ? " / " + tab.thread + (title ? " " + title : "") : " / 板一覧");
       return <span className={active ? "reader-tab reader-tab--active" : "reader-tab"} key={tabId(tab)}>
         <button className="ui-btn" aria-current={active ? "page" : undefined} title={label} onClick={() => activate(tab.source, tab.board, tab.thread)}>{label}</button>
         <button className="ui-btn" aria-label={label + " を閉じる"} onClick={() => closeTab(tab)}>×</button>
@@ -94,8 +102,8 @@ export const App: React.FC = () => {
     })}</nav>}
     {tabNotice && <p className="reader-notice" role="status">{tabNotice}</p>}
     <main className="workspace-grid">
-      <section className="workspace-pane"><BoardList key={source} source={source} selectedBoard={board} onSelect={b => select(b, null)} /></section>
-      <section className="workspace-pane">{board ? <ThreadList key={source + board} source={source} board={board} onSelect={t => select(board, t)} selectedThread={thread} /> : <EmptyPane title="Select a Board" />}</section>
+      <section className="workspace-pane"><LibrarySidebar source={browseSource} selectedBoard={listBoard} mode={mode} onMode={setMode} onBoard={chooseBoard} /></section>
+      <section className="workspace-pane">{mode !== "board" ? <LibraryList key={mode} mode={mode} active={source + "/" + board + "/" + thread} onSelect={openTab} /> : listBoard ? <ThreadList key={browseSource + listBoard} source={browseSource} board={listBoard} onSelect={t => select(listBoard, t)} selectedThread={source === browseSource && board === listBoard ? thread : null} /> : <EmptyPane title="Select a Board" />}</section>
       <section className="workspace-pane">{board && thread ? <ThreadView key={source + board + "/" + thread} source={source} board={board} threadId={thread} /> : <EmptyPane title="Select a Thread" />}</section>
     </main>
     {status && <footer className="status-bar panel-surface">

@@ -32,7 +32,7 @@ export function parseDat(text: string): PostInfo[] {
   return lines.slice(0, 10000).map((line, index) => {
     const fields = line.split("<>");
     if (fields.length < 5) return { no: index + 1, com: "（取得できないレス）" };
-    return { no: index + 1, name: fields[0], date: fields[2], id: /\bID:([^\s<>]+)/.exec(fields[2])?.[1], com: fields[3], media: extractImages(fields[3]) };
+    return { no: index + 1, ...(index === 0 ? { sub: fields[4] } : {}), name: fields[0], date: fields[2], id: /\bID:([^\s<>]+)/.exec(fields[2])?.[1], com: fields[3], media: extractImages(fields[3]) };
   });
 }
 export function parseFiveUrl(raw: unknown): { board: string; thread: number | null } | null {

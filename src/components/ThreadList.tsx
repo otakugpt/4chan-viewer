@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { plainText } from "../lib/text";
-import { useLibrary, toggleFavorite } from "../lib/library";
+import { rememberTitles, useLibrary, toggleFavorite } from "../lib/library";
 import { TranslateButton } from "./TranslateButton";
 
 import { providers } from "../lib/providers";
@@ -44,7 +44,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     provider.threads(board, controller.signal)
       .then((pages) => {
         if (controller.signal.aborted) return;
-        setThreads(pages);
+        setThreads(pages); rememberTitles(pages.map(t => ({ ...t, sub: plainText(t.sub ?? "") })), board, source);
       })
       .catch((err: Error) => {
         if (controller.signal.aborted) return;
@@ -106,7 +106,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="meta text-xs">{library.reads[board + "/" + thread.no] ? "既読" : "未読"}</span>
-                  <button className="ui-btn ui-btn--small" aria-pressed={library.threads.includes(board + "/" + thread.no)} onClick={e => { e.stopPropagation(); toggleFavorite("threads", board + "/" + thread.no, source); }}>{library.threads.includes(board + "/" + thread.no) ? "お気に入り解除" : "お気に入り"}</button>
+                  <button className="ui-btn ui-btn--small" aria-pressed={library.threads.includes(board + "/" + thread.no)} onClick={e => { e.stopPropagation(); toggleFavorite("threads", board + "/" + thread.no, source, plainText(thread.sub ?? "")); }}>{library.threads.includes(board + "/" + thread.no) ? "お気に入り解除" : "お気に入り"}</button>
                 </div>
                 <div className="flex gap-3">
                   {thumb ? (
