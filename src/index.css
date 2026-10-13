@@ -636,9 +636,11 @@ input[type=checkbox] { accent-color: var(--accent); margin-right: 5px; }
 }
 
 .reader-tabs { display: flex; flex-shrink: 0; gap: 4px; overflow-x: auto; padding: 2px; }
-.reader-tab { display: inline-flex; flex-shrink: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.reader-tab { display: inline-flex; flex: 0 0 240px; width: 240px; height: 32px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .reader-tab .ui-btn { border: 0; border-radius: 0; min-height: 30px; }
-.reader-tab .ui-btn:first-child { max-width: 250px; overflow: hidden; text-overflow: ellipsis; }
+.reader-tab .ui-btn:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.reader-tab .ui-btn:last-child { flex: 0 0 30px; padding: 0; }
+.reader-tab .ui-btn:focus-visible { outline-offset: -2px; }
 .reader-tab--active { border-color: var(--accent-strong); }
 .reader-tab--active .ui-btn { background: rgba(20, 119, 104, .35); }
 /* Persistent library: navigation stays visible while long lists scroll locally. */

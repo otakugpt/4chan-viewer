@@ -244,6 +244,20 @@ app.whenReady().then(() => {
           await new Promise(r => setTimeout(r, 100));
           if (document.querySelector('.post-card').parentElement.scrollTop < 500) throw new Error('Tab position lost');
         })()`);
+        const assertTabSizes = async () => {
+          assert.equal(await run(`(() => {
+            const tabs = [...document.querySelectorAll('.reader-tab')];
+            return tabs.length >= 2 && tabs.every(tab => {
+              const rect = tab.getBoundingClientRect();
+              const close = tab.querySelector('button:last-child').getBoundingClientRect();
+              const label = tab.querySelector('button:first-child');
+              return rect.width === 240 && rect.height === 32 && close.width === 30 &&
+                Math.abs(rect.right - close.right - 1) < 0.5 &&
+                getComputedStyle(label).textOverflow === 'ellipsis' && Boolean(label.title);
+            });
+          })()`), true, 'Tabs must have uniform dimensions and fixed close buttons');
+        };
+        await assertTabSizes();
         const tabCount = await run("document.querySelectorAll('.reader-tab').length");
         await new Promise(resolve => { win.webContents.once('did-finish-load', resolve); win.reload(); });
         await run(`(async () => {
@@ -288,6 +302,7 @@ app.whenReady().then(() => {
         fs.writeFileSync(path.join(outputDir, 'rift-library.png'), (await win.webContents.capturePage()).toPNG());
         win.setSize(390, 844); await new Promise(r => setTimeout(r, 200));
         assert.equal(await run('document.documentElement.scrollWidth <= window.innerWidth'), true);
+        await assertTabSizes();
         fs.writeFileSync(path.join(outputDir, 'rift-library-mobile.png'), (await win.webContents.capturePage()).toPNG());
         win.setSize(1400, 900);
         await run(`(async () => {
