@@ -10,7 +10,7 @@ import { providers, imageBase } from "../lib/providers";
 import { plainText } from "../lib/text";
 import { recordVisit, getHistoryEpoch, getLibrary, getClearEpoch, rememberReading, toggleFavorite, useLibrary, setFilters } from "../lib/library";
 
-type Media = MediaItem & { target: ImageTarget };
+type Media = MediaItem;
 export function ThreadView({ source, board, threadId }: { source: BoardSource; board: string; threadId: number }) {
   const provider = providers[source];
   const [posts, setPosts] = useState<PostInfo[]>([]);

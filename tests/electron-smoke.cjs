@@ -34,6 +34,7 @@ const externalOpened = [];
 const fivePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB9sAAAAASUVORK5CYII=', 'base64');
 let dialogCalls = 0;
 let downloadCalls = 0;
+const downloadedUrls = [];
 let cancelSave = true;
 const Module = require('node:module');
 const originalLoad = Module._load;
@@ -52,7 +53,7 @@ Module._load = function (name, ...args) {
     throw new Error('Unexpected fixture URL');
   } };
 
-  if (name === './services') return { ...originalLoad.call(this, name, ...args), downloadImage: async () => { downloadCalls++; if (downloadCalls <= 3) throw new Error('Fixture download failure'); } };
+  if (name === './services') return { ...originalLoad.call(this, name, ...args), downloadImage: async url => { downloadedUrls.push(url); downloadCalls++; if (downloadCalls <= 3) throw new Error('Fixture download failure'); } };
   return name === 'electron' ? { ...electron, BrowserWindow: HiddenWindow, shell: { openExternal: async url => { externalOpened.push(url); } }, dialog: { showMessageBox: async options => { assert.equal(options.message, "外部サイトへ遷移します"); externalPrompts++; return { response: allowExternal ? 1 : 0 }; }, showOpenDialog: async () => { dialogCalls++; await new Promise(r => setTimeout(r, 100)); return { canceled: cancelSave, filePaths: cancelSave ? [] : [process.env.SMOKE_USER_DATA] }; } } } : originalLoad.call(this, name, ...args);
 };
 const timeout = setTimeout(() => { console.error('Smoke test timed out'); app.exit(1); }, 60000);
@@ -89,7 +90,11 @@ app.whenReady().then(() => {
         assert.equal(result.isolated, true);
         assert.equal(result.invalid.error, 'Missing text');
         assert.deepEqual(result.translated, { translatedText: 'smoke translation' });
-        const run = code => win.webContents.executeJavaScript(code);
+        const run = async code => {
+          const result = await win.webContents.executeJavaScript('Promise.resolve().then(() => (0, eval)(' + JSON.stringify(code) + ')).then(value => ({ ok: true, value }), error => ({ ok: false, error: String(error), stack: error.stack }))');
+          if (!result.ok) throw new Error(result.error + '\n' + result.stack);
+          return result.value;
+        };
         await run(`window.waitFor = async (test) => { const end = Date.now() + 8000; while (!test()) { if (Date.now() > end) throw new Error('UI wait timed out'); await new Promise(r => setTimeout(r, 25)); } }; true;`);
         await run(`(async () => {
           await waitFor(() => document.querySelectorAll('.board-item').length === 2);
@@ -141,8 +146,42 @@ app.whenReady().then(() => {
         })()`);
         assert.equal(dialogCalls, 3);
         assert.equal(downloadCalls, 4);
+        cancelSave = true;
+        await run(`(async () => {
+          document.querySelector('.post-image-link').click();
+          await waitFor(() => document.querySelector('dialog[open]'));
+          document.querySelector('dialog').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+          await waitFor(() => document.querySelector('.viewer-toolbar').textContent.includes('2 / 16'));
+          document.querySelector('.viewer-save').click(); document.querySelector('.viewer-save').click();
+          await waitFor(() => document.querySelector('.viewer-save-status')?.textContent.includes('キャンセル') && !document.querySelector('.viewer-save').disabled);
+        })()`);
+        assert.equal(dialogCalls, 4); assert.equal(downloadCalls, 4);
+        cancelSave = false;
+        await run(`(async () => {
+          document.querySelector('.viewer-save').click();
+          await waitFor(() => document.querySelector('.viewer-save').disabled);
+          document.querySelector('dialog').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+          await waitFor(() => document.querySelector('.viewer-toolbar').textContent.includes('3 / 16'));
+          await waitFor(() => document.querySelector('.viewer-save-status')?.textContent.includes('1/1 件成功') && !document.querySelector('.viewer-save').disabled);
+        })()`);
+        assert.equal(downloadedUrls.at(-1), 'https://i.4cdn.org/a/201.jpg');
+        assert.equal(dialogCalls, 5); assert.equal(downloadCalls, 5);
+        await run(`(async () => {
+          document.querySelector('.viewer-save').click();
+          await waitFor(() => document.querySelector('.viewer-save').disabled);
+          await waitFor(() => !document.querySelector('.viewer-save').disabled);
+        })()`);
+        assert.equal(downloadedUrls.at(-1), 'https://i.4cdn.org/a/202.jpg');
+        assert.equal(dialogCalls, 6); assert.equal(downloadCalls, 6);
         const outputDir = path.resolve(__dirname, '../.test-artifacts');
         fs.mkdirSync(outputDir, { recursive: true });
+        win.setSize(1401, 901); await new Promise(r => setTimeout(r, 100)); win.setSize(1400, 900); await new Promise(r => setTimeout(r, 200));
+        fs.writeFileSync(path.join(outputDir, 'rift-viewer-save.png'), (await win.webContents.capturePage()).toPNG());
+        win.setSize(390, 844); await new Promise(r => setTimeout(r, 200));
+        assert.equal(await run('document.querySelector("dialog").scrollWidth <= document.querySelector("dialog").clientWidth'), true);
+        fs.writeFileSync(path.join(outputDir, 'rift-viewer-save-mobile.png'), (await win.webContents.capturePage()).toPNG());
+        win.setSize(1400, 900);
+        await run("document.querySelector('dialog .viewer-actions button:last-child').click()");
         win.setSize(1401, 901);
         await new Promise(r => setTimeout(r, 100));
         win.setSize(1400, 900);
@@ -196,8 +235,13 @@ app.whenReady().then(() => {
           await waitFor(() => document.querySelector('.gallery-card img'));
           const img = document.querySelector('.gallery-card img');
           if (!img.src.startsWith('blob:')) throw new Error('Remote URL exposed to image element');
-          document.querySelector('.gallery-meta .ui-btn').click();
-          await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('1/1 件成功'));
+          document.querySelector('.gallery-link').click();
+          await waitFor(() => document.querySelector('dialog .viewer-content img'));
+          if (!document.querySelector('dialog .viewer-content img').src.startsWith('blob:')) throw new Error('Viewer remote image was not validated');
+          document.querySelector('.viewer-save').click();
+          await waitFor(() => document.querySelector('.viewer-save').disabled);
+          await waitFor(() => document.querySelector('.viewer-save-status')?.textContent.includes('1/1 件成功') && !document.querySelector('.viewer-save').disabled);
+          document.querySelector('dialog .viewer-actions button:last-child').click();
         })()`);
         // Wait for the real safe-image writer, rather than the previous save message.
         await new Promise(r => setTimeout(r, 1200));
@@ -427,6 +471,7 @@ app.whenReady().then(() => {
         })()`);
         assert.equal(externalPrompts, promptsBeforeInternal); assert.equal(externalOpened.length, openedBeforeInternal);
         console.log('PASS: 5ch internal links from saved 4chan text, official archive fallback, live link navigation, tab reuse, no external browser');
+        console.log('PASS: individual viewer save, cancellation/duplicate prevention, captured target during navigation, 5ch safe writer and mobile layout');
         console.log('PASS: offline save/overwrite/reload/delete/clear, no offline network, compact boards, confirmed external links, mobile layout');
         console.log('PASS: library favorites/history/search/delete/pause/restore + 4chan regression + RIFT 5ch boards/threads/posts, references, image consent/dedup/blob preview/safe save, ID filters, URL import and site isolation');
         clearTimeout(timeout);

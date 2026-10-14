@@ -595,7 +595,9 @@ body {
 .ui-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .media-viewer { position: fixed; inset: 0; margin: auto; width: min(1100px, 96vw); max-width: 96vw; max-height: 94dvh; padding: 16px; border: 1px solid var(--border); border-radius: 16px; color: var(--text-primary); background: #080d19; }
 .media-viewer::backdrop { background: rgba(0, 0, 0, .86); }
-.viewer-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.viewer-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.viewer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.viewer-save-status { margin: 10px 0 0; font-size: .78rem; color: var(--text-soft); overflow-wrap: anywhere; }
 .viewer-content { display: flex; align-items: center; justify-content: center; height: min(72dvh, 800px); padding: 12px 0; }
 .viewer-content img, .viewer-content video { max-width: 100%; max-height: 100%; object-fit: contain; }
 @media (max-width: 1080px) {

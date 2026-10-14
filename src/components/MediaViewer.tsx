@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { RemoteImage } from "./RemoteImage";
-export interface MediaItem { postNo: number; full: string; thumb: string; filename: string; remote?: boolean }
+import { useSave } from "./SaveProvider";
+export interface MediaItem { postNo: number; full: string; thumb: string; filename: string; remote?: boolean; target: ImageTarget }
 export function MediaViewer({ items, initialIndex, onClose, onJump }: { items: MediaItem[]; initialIndex: number; onClose: () => void; onJump?: (no: number) => void }) {
+  const { busy, status, save } = useSave();
   const [index, setIndex] = useState(initialIndex);
   const [failed, setFailed] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -21,8 +23,12 @@ export function MediaViewer({ items, initialIndex, onClose, onJump }: { items: M
   }}>
     <div className="viewer-toolbar">
       <span className="meta">{index + 1} / {items.length} · No.{item.postNo}</span>
-      <button className="ui-btn" onClick={onClose} autoFocus>閉じる (Esc)</button>
+      <div className="viewer-actions">
+        <button className="ui-btn ui-btn--primary viewer-save" disabled={busy} onClick={() => void save([item.target])}>{busy ? "保存中…" : /\.webm$/i.test(item.filename) ? "この動画を保存" : "この画像を保存"}</button>
+        <button className="ui-btn" onClick={onClose} autoFocus>閉じる (Esc)</button>
+      </div>
     </div>
+    {status && <p className="viewer-save-status" role="status"><span className="meta">保存状況（アプリ全体）: </span>{status}</p>}
     <div className="viewer-content">
       {item.remote ? <RemoteImage url={item.full} alt={`投稿 ${item.postNo}`} /> : failed ? <p role="alert">読み込めませんでした。<button className="ui-btn" onClick={() => setFailed(false)}>再試行</button></p> : /\.webm$/i.test(item.filename)
         ? <video key={item.full} src={item.full} controls onError={() => setFailed(true)} />
