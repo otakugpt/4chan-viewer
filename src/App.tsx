@@ -9,16 +9,22 @@ import { ThreadView } from "./components/ThreadView";
 import { useSave } from "./components/SaveProvider";
 import { forgetSelection, getLibrary, useLibrary, getSource, selectSource, rememberSelection, clearLibrary } from "./lib/library";
 
-import { loadTabs, saveTabs, tabId, MAX_TABS, ReaderTab } from "./lib/tabs";
+import { loadTabs, saveTabs, clearTabs, tabId, MAX_TABS, ReaderTab } from "./lib/tabs";
+import { enabledSources, sources } from "./lib/sources";
+import { useLibraries } from "./lib/library";
+import { V2exSettings } from "./components/V2exSettings";
+import { parseV2exUrl } from "../electron/v2ex-url";
 
 const EmptyPane = ({ title }: { title: string }) => <div className="panel-surface pane-flex empty-pane"><h2>{title}</h2><p className="mt-3">左から板、スレッドを選択してください。</p></div>;
 export const App: React.FC = () => {
+  const [connectionSettings, setConnectionSettings] = useState(false);
+  const [connectionRevision, setConnectionRevision] = useState(0);
   const [savedDoc, setSavedDoc] = useState<SavedThread | null>(null);
   const [clearing, setClearing] = useState(false);
   useEffect(() => { void refreshSaved(); }, []);
   const [source, setSource] = useState<BoardSource>(getSource);
   const [board, setBoard] = useState<string | null>(() => getLibrary(getSource()).last?.board ?? null);
-  const [thread, setThread] = useState<number | null>(() => getLibrary(getSource()).last?.thread ?? null);
+  const [thread, setThread] = useState<ThreadId | null>(() => getLibrary(getSource()).last?.thread ?? null);
   const [mode, setMode] = useState<LibraryMode>("board");
   const [browseSource, setBrowseSource] = useState<BoardSource>(getSource);
   const [listBoard, setListBoard] = useState<string | null>(() => getLibrary(getSource()).last?.board ?? null);
@@ -32,19 +38,23 @@ export const App: React.FC = () => {
     return saved;
   });
   const [tabNotice, setTabNotice] = useState("");
-  useEffect(() => saveTabs(tabs), [tabs]);
+  const [tabStorageError, setTabStorageError] = useState("");
+  useEffect(() => { setTabStorageError(saveTabs(tabs) ? "" : "タブを保存できません。既存の保存データを確認してください。"); }, [tabs]);
   const [url, setUrl] = useState("");
   const [urlError, setUrlError] = useState("");
   const [opening, setOpening] = useState(false);
   const navigation = useRef(0);
   const library = useLibrary(source);
+  const { storageError } = useLibraries();
   const { progress, status, busy, failed, save } = useSave();
-  const activate = (next: BoardSource, b: string | null, t: number | null) => {
+  const activate = (next: BoardSource, b: string | null, t: ThreadId | null) => {
+    if (!sources[next].enabled) { setTabNotice("このサイトはまだ閲覧できません。"); return; }
     navigation.current++; setSavedDoc(null); setOpening(false); setUrlError(""); setTabNotice("");
     setSource(next); selectSource(next); setBoard(b); setThread(t); setBrowseSource(next); setListBoard(b);
     if (b) rememberSelection(b, t, next); else forgetSelection(next);
   };
-  const openTab = (next: BoardSource, b: string | null, t: number | null) => {
+  const openTab = (next: BoardSource, b: string | null, t: ThreadId | null) => {
+    if (!sources[next].enabled) { setTabNotice("このサイトはまだ閲覧できません。"); return; }
     if (b) {
       const target = { source: next, board: b, thread: t };
       if (!tabs.some(item => tabId(item) === tabId(target))) {
@@ -54,7 +64,7 @@ export const App: React.FC = () => {
     }
     activate(next, b, t);
   };
-  const select = (b: string, t: number | null) => openTab(browseSource, b, t);
+  const select = (b: string, t: ThreadId | null) => openTab(browseSource, b, t);
   const chooseBoard = (next: BoardSource, b: string) => {
     navigation.current++; setOpening(false); setBrowseSource(next); setListBoard(b); setMode("board");
     if (!thread) openTab(next, b, null);
@@ -73,38 +83,40 @@ export const App: React.FC = () => {
       else activate(source, null, null);
     }
   };
-  const navigateFive = async (raw: string) => {
+  const navigateInternal = async (raw: string) => {
     const generation = ++navigation.current;
     setOpening(true); setUrlError("");
     try {
-      if (!window.electron?.fiveRequest) throw new Error("5ch閲覧は Electron アプリで利用できます。");
-      const result = await window.electron.fiveRequest({ kind: "resolve", url: raw.trim() });
+      const targetSource = parseV2exUrl(raw.trim()) ? "v2ex" : "5ch";
+      if (!window.electron?.fiveRequest || !window.electron?.v2exRequest) throw new Error("URLからの閲覧は Electron アプリで利用できます。");
+      const result = targetSource === "v2ex" ? await window.electron.v2exRequest({ kind: "resolve", url: raw.trim() }) : await window.electron.fiveRequest({ kind: "resolve", url: raw.trim() });
       if (generation !== navigation.current) return;
       if ("error" in result) throw new Error(result.error);
       if (!("board" in result)) throw new Error("移動先を確認できませんでした。");
-      openTab("5ch", result.board, result.thread);
+      openTab(targetSource, result.board, result.thread === null ? null : String(result.thread));
       setMode("board");
     } catch (error) { if (generation === navigation.current) throw error; }
     finally { if (generation === navigation.current) setOpening(false); }
   };
   const openUrl = async (e: React.FormEvent) => {
     e.preventDefault();
-    try { await navigateFive(url); }
+    try { await navigateInternal(url); }
     catch (error) { setUrlError(error instanceof Error ? error.message : "URLを開けませんでした。"); }
   };
   const renderedNavigation = navigation.current;
-  return <ThreadNavigation.Provider value={navigateFive}><div className="app-shell">
+  return <ThreadNavigation.Provider value={navigateInternal}><div className="app-shell">
     <header className="topbar panel-surface">
       <h1 className="topbar-title" title="RIFT（仮称）"><img className="app-icon" src="./icons/rift-48.png" width="24" height="24" alt="" aria-hidden="true" />RIFT</h1>
       <div className="topbar-meta">
-        <nav aria-label="掲示板サイト" className="flex gap-2">{(["4chan", "5ch"] as BoardSource[]).map(site => <button key={site} data-source={site} className={`ui-btn ${browseSource === site ? "ui-btn--active" : ""}`} aria-pressed={browseSource === site} onClick={() => changeSource(site)}>{site}</button>)}</nav>
-        {browseSource === "5ch" && <form onSubmit={openUrl} className="url-bar"><input value={url} onChange={e => setUrl(e.target.value)} aria-label="5chのURL" placeholder="5chの板・スレッドURL（旧 .net も対応）" /><button className="ui-btn" disabled={opening || !url.trim()}>{opening ? "確認中…" : "URLを開く"}</button>{urlError && <span role="alert">{urlError}</span>}</form>}
+        <nav aria-label="掲示板サイト" className="flex gap-2">{enabledSources.map(site => <button key={site} data-source={site} className={`ui-btn ${browseSource === site ? "ui-btn--active" : ""}`} aria-pressed={browseSource === site} onClick={() => changeSource(site)}>{sources[site].label}</button>)}</nav>
+        {(browseSource === "5ch" || browseSource === "v2ex") && <form onSubmit={openUrl} className="url-bar"><input value={url} onChange={e => setUrl(e.target.value)} aria-label={browseSource === "v2ex" ? "V2EXのURL" : "5chのURL"} placeholder={browseSource === "v2ex" ? "V2EXのノード・トピックURL" : "5chの板・スレッドURL（旧 .net も対応）"} /><button className="ui-btn" disabled={opening || !url.trim()}>{opening ? "確認中…" : "URLを開く"}</button>{urlError && <span role="alert">{urlError}</span>}</form>}
+        <button className="ui-btn" onClick={() => setConnectionSettings(true)}>V2EX接続設定</button>
         <span className="chip meta">{savedDoc ? `保存 /${savedDoc.board}/` : board ? `/${board}/` : "No board"}</span>
         <span className="chip meta">{savedDoc ? `No.${savedDoc.thread}` : thread ? `No.${thread}` : "No thread"}</span>
         <button className="ui-btn" disabled={clearing} onClick={async () => {
           if (!window.confirm("全サイトのお気に入り・閲覧履歴・非表示設定・保存済み本文・タブを削除しますか？")) return;
           setClearing(true);
-          try { await deleteSaved(); navigation.current++; clearLibrary(); setSavedDoc(null); setTabs([]); setTabNotice(""); setBoard(null); setThread(null); setListBoard(null); }
+          try { await deleteSaved(); navigation.current++; clearLibrary(); clearTabs(); setSavedDoc(null); setTabs([]); setTabNotice(""); setBoard(null); setThread(null); setListBoard(null); }
           catch { setTabNotice("保存本文の消去に失敗しました。ほかの閲覧情報は消去していません。"); }
           finally { setClearing(false); }
         }}>閲覧データを消去</button>
@@ -120,10 +132,12 @@ export const App: React.FC = () => {
       </span>;
     })}</nav>}
     {tabNotice && <p className="reader-notice" role="status">{tabNotice}</p>}
+    {(storageError || tabStorageError) && <p className="reader-notice" role="alert">{storageError || tabStorageError}</p>}
+    {browseSource === "v2ex" && <p className="reader-notice">V2EX 試験対応 / 個人トークンが必要です。原文テキストのみ表示し、画像・翻訳は後続フェーズで対応します。API取得は約6秒間隔です。</p>}
     <main className="workspace-grid">
-      <section className="workspace-pane"><LibrarySidebar source={browseSource} selectedBoard={listBoard} mode={mode} onMode={next => { navigation.current++; setOpening(false); setMode(next); }} onBoard={chooseBoard} /></section>
-      <section className="workspace-pane">{mode === "saved" ? <SavedThreadList onOpen={doc => { if (navigation.current === renderedNavigation) setSavedDoc(doc); }} onDelete={key => { if (!key || savedDoc?.key === key) setSavedDoc(null); }} /> : mode !== "board" ? <LibraryList key={mode} mode={mode} active={source + "/" + board + "/" + thread} onSelect={openTab} /> : listBoard ? <ThreadList key={browseSource + listBoard} source={browseSource} board={listBoard} onSelect={t => select(listBoard, t)} selectedThread={source === browseSource && board === listBoard ? thread : null} /> : <EmptyPane title="Select a Board" />}</section>
-      <section className="workspace-pane">{savedDoc ? <SavedThreadView key={savedDoc.key + savedDoc.savedAt} doc={savedDoc} onClose={() => setSavedDoc(null)} /> : board && thread ? <ThreadView key={source + board + "/" + thread} source={source} board={board} threadId={thread} /> : <EmptyPane title="Select a Thread" />}</section>
+      <section className="workspace-pane"><LibrarySidebar key={browseSource === "v2ex" ? connectionRevision : "other"} source={browseSource} selectedBoard={listBoard} mode={mode} onMode={next => { navigation.current++; setOpening(false); setMode(next); }} onBoard={chooseBoard} /></section>
+      <section className="workspace-pane">{mode === "saved" ? <SavedThreadList onOpen={doc => { if (navigation.current === renderedNavigation) setSavedDoc(doc); }} onDelete={key => { if (!key || savedDoc?.key === key) setSavedDoc(null); }} /> : mode !== "board" ? <LibraryList key={mode} mode={mode} active={source + "/" + board + "/" + thread} onSelect={openTab} /> : listBoard ? <ThreadList key={browseSource + listBoard + (browseSource === "v2ex" ? connectionRevision : "")} source={browseSource} board={listBoard} onSelect={t => select(listBoard, t)} selectedThread={source === browseSource && board === listBoard ? thread : null} /> : <EmptyPane title="Select a Board" />}</section>
+      <section className="workspace-pane">{savedDoc ? <SavedThreadView key={savedDoc.key + savedDoc.savedAt} doc={savedDoc} onClose={() => setSavedDoc(null)} /> : board && thread ? <ThreadView key={source + board + "/" + thread + (source === "v2ex" ? "/" + connectionRevision : "")} source={source} board={board} threadId={thread} /> : <EmptyPane title="Select a Thread" />}</section>
     </main>
     {status && <footer className="status-bar panel-surface">
       <div className="flex items-center justify-between gap-4"><span className="meta">Save Status</span><span>{Math.round(progress)}%</span></div>
@@ -131,5 +145,6 @@ export const App: React.FC = () => {
       {failed.length > 0 && <button className="ui-btn mt-2" disabled={busy} onClick={() => save(failed)}>失敗した {failed.length} 件だけ再試行</button>}
       <div className="progress-track mt-3"><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
     </footer>}
+    {connectionSettings && <V2exSettings onClose={() => setConnectionSettings(false)} onChanged={() => { navigation.current++; setOpening(false); setConnectionRevision(value => value + 1); }} />}
   </div></ThreadNavigation.Provider>;
 };

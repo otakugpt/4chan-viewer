@@ -8,7 +8,7 @@ if (!process.versions.electron) {
   const env = { ...process.env, NODE_ENV: 'production', DEEPL_API_KEY: 'test-placeholder', SMOKE_USER_DATA: dir };
   delete env.ELECTRON_RUN_AS_NODE;
   const result = require('node:child_process').spawnSync(require('electron'), [__filename], {
-    env, windowsHide: true, encoding: 'utf8', timeout: 90000,
+    env, windowsHide: true, encoding: 'utf8', timeout: 120000,
   });
   process.stdout.write(result.stdout || '');
   process.stderr.write(result.stderr || '');
@@ -42,8 +42,29 @@ class HiddenWindow extends electron.BrowserWindow {
   constructor(options) { assert.ok(fs.existsSync(options.icon)); assert.equal(electron.nativeImage.createFromPath(options.icon).isEmpty(), false); super({ ...options, show: false, webPreferences: { ...options.webPreferences, backgroundThrottling: false } }); }
 }
 Module._load = function (name, ...args) {
-  if (name === './network') return { ...originalLoad.call(this, name, ...args), getBytes: async url => {
+  // Fixture requests have no rate impact. Production still uses the 6.1-second queue.
+  if (name === './v2ex') { const real = originalLoad.call(this, name, ...args); return { ...real, createV2exService: snapshot => real.createV2exService(snapshot, { spacing: 0 }) }; }
+  if (name === './network') return { ...originalLoad.call(this, name, ...args), getBytes: async (url, limit, headers = {}) => {
     networkReads++;
+    if (url.startsWith('https://www.v2ex.com/')) {
+      const node = { name: 'python', title: 'Python fixture' };
+      if (url.endsWith('/api/nodes/all.json')) { assert.equal(headers.Authorization, undefined); return { status: 200, headers: {}, body: Buffer.from(JSON.stringify([node])) }; }
+      assert.equal(headers.Authorization, 'Bearer fixture-not-a-real-credential');
+      assert.equal(limit, 2 * 1024 * 1024);
+      let result;
+      const topic = { id: 123, node, title: '中文 AI fixture', content: 'code <div> & 中文 [next](https://www.v2ex.com/t/124)', member: { username: 'Alice' }, created: 1760000000, replies: 2 };
+      const reply = id => ({ id, content: '中文 reply ' + id, member: { username: 'Bob' }, created: 1760000001 });
+      if (url.endsWith('/api/v2/nodes/python')) result = node;
+      else if (url.endsWith('/nodes/python/topics?p=1')) result = [topic];
+      else if (url.endsWith('/nodes/python/topics?p=2')) result = [];
+      else if (url.endsWith('/topics/123')) result = topic;
+      else if (url.endsWith('/topics/124')) result = { ...topic, id: 124, title: 'Next V2EX fixture' };
+      else if (url.endsWith('/replies?p=1')) result = [reply(123)];
+      else if (url.endsWith('/replies?p=2')) result = [reply(124)];
+      else if (url.endsWith('/replies?p=3')) result = [];
+      else throw new Error('Unexpected V2EX fixture path');
+      return { status: 200, headers: {}, body: Buffer.from(JSON.stringify({ success: true, result })) };
+    }
     if (url === 'https://menu.5ch.io/bbsmenu.html') return { status: 200, headers: {}, body: Buffer.from('<a href="https://egg.5ch.io/software/">Software</a>') };
     if (url.endsWith('/software/subject.txt')) return { status: 200, headers: {}, body: Buffer.from('1608930977.dat<>RIFT fixture (3)\n') };
     if (url.endsWith('/software/dat/1608930976.dat')) return { status: 404, headers: {}, body: Buffer.alloc(0) };
@@ -56,7 +77,7 @@ Module._load = function (name, ...args) {
   if (name === './services') return { ...originalLoad.call(this, name, ...args), downloadImage: async url => { downloadedUrls.push(url); downloadCalls++; if (downloadCalls <= 3) throw new Error('Fixture download failure'); } };
   return name === 'electron' ? { ...electron, BrowserWindow: HiddenWindow, shell: { openExternal: async url => { externalOpened.push(url); } }, dialog: { showMessageBox: async options => { assert.equal(options.message, "外部サイトへ遷移します"); externalPrompts++; return { response: allowExternal ? 1 : 0 }; }, showOpenDialog: async () => { dialogCalls++; await new Promise(r => setTimeout(r, 100)); return { canceled: cancelSave, filePaths: cancelSave ? [] : [process.env.SMOKE_USER_DATA] }; } } } : originalLoad.call(this, name, ...args);
 };
-const timeout = setTimeout(() => { console.error('Smoke test timed out'); app.exit(1); }, 60000);
+const timeout = setTimeout(() => { console.error('Smoke test timed out'); app.exit(1); }, 90000);
 app.whenReady().then(() => {
   session.defaultSession.protocol.handle('https', async request => {
     networkReads++;
@@ -132,7 +153,7 @@ app.whenReady().then(() => {
           pane.scrollTop = 900;
           pane.dispatchEvent(new Event('scroll'));
           await new Promise(r => setTimeout(r, 350));
-          const data = JSON.parse(localStorage.getItem('rift.library.v2')).sites['4chan'];
+          const data = JSON.parse(localStorage.getItem('rift.library.v3')).sites['4chan'];
           if (data.reads['a/200'].scroll < 800 || !data.threads.includes('a/200')) throw new Error('Reading persistence');
         })()`);
         assert.equal(dialogCalls, 1);
@@ -205,12 +226,12 @@ app.whenReady().then(() => {
           const end = Date.now() + 8000;
           while (!document.querySelector('.post-card')) { if (Date.now() > end) throw new Error('Resume timeout'); await new Promise(r => setTimeout(r, 25)); }
           await new Promise(r => setTimeout(r, 300));
-          if (!JSON.parse(localStorage.getItem('rift.library.v2')).sites['4chan'].threads.includes('a/200')) throw new Error('Favorite not restored');
+          if (!JSON.parse(localStorage.getItem('rift.library.v3')).sites['4chan'].threads.includes('a/200')) throw new Error('Favorite not restored');
           if (document.querySelector('.post-card').parentElement.scrollTop < 500) throw new Error('Position not restored');
           window.confirm = () => true;
           [...document.querySelectorAll('button')].find(b => b.textContent.includes('閲覧データを消去')).click();
           await new Promise(r => setTimeout(r, 100));
-          const cleared = JSON.parse(localStorage.getItem('rift.library.v2')).sites['4chan'];
+          const cleared = JSON.parse(localStorage.getItem('rift.library.v3')).sites['4chan'];
           if (Object.keys(cleared.reads).length || cleared.threads.length) throw new Error('History deletion failed');
         })()`);
         await run(`window.waitFor = async (test) => { const end = Date.now() + 12000; while (!test()) { if (Date.now() > end) throw new Error('5ch UI wait timed out'); await new Promise(r => setTimeout(r, 25)); } }; true;`);
@@ -316,7 +337,7 @@ app.whenReady().then(() => {
           window.confirm = () => true;
           [...document.querySelectorAll('button')].find(b => b.textContent.includes('閲覧データを消去')).click();
           await new Promise(r => setTimeout(r, 100));
-          if (document.querySelector('.reader-tab') || JSON.parse(localStorage.getItem('rift.tabs.v1')).tabs.length) throw new Error('Tab history not cleared');
+          if (document.querySelector('.reader-tab') || JSON.parse(localStorage.getItem('rift.tabs.v2')).tabs.length) throw new Error('Tab history not cleared');
         })()`);
         await run(`window.waitFor = async (test) => { const end = Date.now() + 12000; while (!test()) { if (Date.now() > end) throw new Error('Library UI timeout'); await new Promise(r => setTimeout(r, 25)); } }; true;`);
         await run(`(async () => {
@@ -358,16 +379,16 @@ app.whenReady().then(() => {
           const pane = document.querySelector('.post-card').parentElement;
           pane.scrollTop = 200; pane.dispatchEvent(new Event('scroll'));
           await new Promise(r => setTimeout(r, 350));
-          const saved = JSON.parse(localStorage.getItem('rift.library.v2')).sites['5ch'];
+          const saved = JSON.parse(localStorage.getItem('rift.library.v3')).sites['5ch'];
           if (Object.keys(saved.history).length || !saved.threads.includes('software/1608930977')) throw new Error('History deletion affected favorites or resurrected history');
           document.querySelector('.history-options').open = true;
           document.querySelector('.history-options input').click();
-          await waitFor(() => JSON.parse(localStorage.getItem('rift.library.v2')).historyEnabled === false);
+          await waitFor(() => JSON.parse(localStorage.getItem('rift.library.v3')).historyEnabled === false);
           document.querySelector('[data-source="4chan"]').click();
           document.querySelector('[data-source="5ch"]').click();
           await waitFor(() => document.querySelectorAll('.post-card').length === 3);
           await new Promise(r => setTimeout(r, 100));
-          if (Object.keys(JSON.parse(localStorage.getItem('rift.library.v2')).sites['5ch'].history).length) throw new Error('Paused history recorded visit');
+          if (Object.keys(JSON.parse(localStorage.getItem('rift.library.v3')).sites['5ch'].history).length) throw new Error('Paused history recorded visit');
           document.querySelectorAll('.library-nav-item')[0].click();
           await waitFor(() => document.querySelector('.saved-thread'));
         })()`);
@@ -379,7 +400,7 @@ app.whenReady().then(() => {
           document.querySelectorAll('.library-nav-item')[0].click();
           await new Promise(r => setTimeout(r, 100));
           if (!document.querySelector('.saved-thread-open').textContent.includes('fixture')) throw new Error('Favorite title not restored');
-          if (JSON.parse(localStorage.getItem('rift.library.v2')).historyEnabled !== false) throw new Error('History setting not restored');
+          if (JSON.parse(localStorage.getItem('rift.library.v3')).historyEnabled !== false) throw new Error('History setting not restored');
         })()`);
 
         await run(`window.waitFor = async (test) => { const end = Date.now() + 12000; while (!test()) { if (Date.now() > end) throw new Error('Saved UI timeout'); await new Promise(r => setTimeout(r, 25)); } }; window.confirm = () => true; true;`);
@@ -474,6 +495,142 @@ app.whenReady().then(() => {
         console.log('PASS: individual viewer save, cancellation/duplicate prevention, captured target during navigation, 5ch safe writer and mobile layout');
         console.log('PASS: offline save/overwrite/reload/delete/clear, no offline network, compact boards, confirmed external links, mobile layout');
         console.log('PASS: library favorites/history/search/delete/pause/restore + 4chan regression + RIFT 5ch boards/threads/posts, references, image consent/dedup/blob preview/safe save, ID filters, URL import and site isolation');
+        const legacyLibrary = JSON.stringify({ version: 2, currentSource: '4chan', historyEnabled: false, boardOrder: ['4chan/g'], sites: {
+          '4chan': { version: 2, boards: ['g'], threads: ['g/100'], history: { 'g/100': 1000 }, reads: { 'g/100': { post: 100, scroll: 0, updated: 1000 } }, metadata: { 'g/100': { title: 'Legacy favorite fixture', added: 1000 } }, last: { board: 'g', thread: 100 } },
+        } });
+        const legacyTabs = JSON.stringify({ version: 1, tabs: [{ source: '4chan', board: 'g', thread: 100 }] });
+        const legacyDoc = { key: '4chan/g/777', source: '4chan', board: 'g', thread: 777, title: 'Legacy offline fixture', savedAt: 1000, posts: [{ no: 777, name: 'Legacy author', date: '', id: 'AUTHOR', com: 'Legacy preserved body' }] };
+        await run(`(async () => {
+          const doc = ${JSON.stringify(legacyDoc)};
+          const db = await new Promise((resolve, reject) => { const r = indexedDB.open('rift.saved-threads.v1', 1); r.onsuccess = () => resolve(r.result); r.onerror = reject; });
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction(['threads', 'summaries'], 'readwrite');
+            tx.oncomplete = resolve; tx.onabort = reject;
+            tx.objectStore('threads').put(doc);
+            const { posts, ...info } = doc;
+            tx.objectStore('summaries').put({ ...info, count: posts.length, bytes: new TextEncoder().encode(JSON.stringify(doc)).length });
+          });
+          db.close();
+          window.addEventListener('beforeunload', () => {
+            localStorage.setItem('rift.library.v2', ${JSON.stringify(legacyLibrary)});
+            localStorage.setItem('rift.tabs.v1', ${JSON.stringify(legacyTabs)});
+            localStorage.removeItem('rift.library.v3'); localStorage.removeItem('rift.tabs.v2');
+          }, { once: true });
+        })()`);
+        await new Promise(resolve => { win.webContents.once('did-finish-load', resolve); win.reload(); });
+        await run(`(async () => {
+          window.waitFor = async test => { const end = Date.now() + 8000; while (!test()) { if (Date.now() > end) throw new Error('Migration wait timed out'); await new Promise(r => setTimeout(r, 25)); } };
+          await waitFor(() => document.querySelectorAll('.post-card').length === 16 && document.querySelectorAll('.board-item').length === 2);
+          await waitFor(() => localStorage.getItem('rift.library.v3') && localStorage.getItem('rift.tabs.v2'));
+          if (localStorage.getItem('rift.library.v2') !== ${JSON.stringify(legacyLibrary)}) throw new Error('Legacy library was overwritten');
+          if (localStorage.getItem('rift.tabs.v1') !== ${JSON.stringify(legacyTabs)}) throw new Error('Legacy tabs were overwritten');
+          const library = JSON.parse(localStorage.getItem('rift.library.v3'));
+          if (library.version !== 3 || library.historyEnabled !== false || library.sites['4chan'].last.thread !== '100') throw new Error('Library migration shape');
+          if (!library.sites['4chan'].threads.includes('g/100') || library.sites['4chan'].reads['g/100'].post !== 100) throw new Error('Legacy library entries lost');
+          if (document.querySelectorAll('.reader-tab').length !== 1 || !document.querySelector('.post-card .meta').textContent.includes('既読')) throw new Error('Legacy tab/reading state lost');
+          if (!document.querySelector('[data-source="v2ex"]') || document.querySelector('[data-source="ptt"]')) throw new Error('Incorrect site exposure');
+          document.querySelectorAll('.library-nav-item')[2].click();
+          await waitFor(() => [...document.querySelectorAll('.saved-thread-open')].some(button => button.textContent.includes('Legacy offline fixture')));
+        })()`);
+        const readsBeforeLegacyOffline = networkReads;
+        await run(`(async () => {
+          [...document.querySelectorAll('.saved-thread-open')].find(button => button.textContent.includes('Legacy offline fixture')).click();
+          await waitFor(() => document.querySelector('.offline-thread'));
+          if (!document.querySelector('.offline-thread').textContent.includes('Legacy preserved body')) throw new Error('Legacy snapshot unreadable');
+          const db = await new Promise((resolve, reject) => { const r = indexedDB.open('rift.saved-threads.v1', 1); r.onsuccess = () => resolve(r.result); r.onerror = reject; });
+          const value = await new Promise(resolve => { const r = db.transaction('threads').objectStore('threads').get('4chan/g/777'); r.onsuccess = () => resolve(r.result); });
+          db.close();
+          if (JSON.stringify(value) !== ${JSON.stringify(JSON.stringify(legacyDoc))}) throw new Error('Reading rewrote the legacy snapshot');
+        })()`);
+        assert.equal(networkReads, readsBeforeLegacyOffline);
+        console.log('PASS: actual legacy localStorage/IndexedDB migration, preserved originals, string IDs, read state and offline access');
+        const externalBeforeV2ex = externalPrompts;
+        // Hidden windows can suspend entry animations. Use reduced motion for deterministic captures.
+        await win.webContents.insertCSS('.animate-enter { animation: none !important; }');
+        await run(`(async () => {
+          window.confirm = () => true;
+          window.clickText = text => { const button = [...document.querySelectorAll('button')].find(b => b.textContent === text); if (!button) throw new Error('Missing button: ' + text); button.click(); };
+          document.querySelector('[data-source="v2ex"]').click();
+          await waitFor(() => document.querySelector('.board-item')?.textContent.includes('/python/'));
+          document.querySelector('.board-item').click();
+          await waitFor(() => document.querySelector('.error-state')?.textContent.includes('トークン'));
+          clickText('V2EX接続設定');
+          await waitFor(() => document.querySelector('#v2ex-token') && !document.querySelector('#v2ex-token').disabled);
+          const input = document.querySelector('#v2ex-token');
+          if (input.type !== 'password') throw new Error('Unmasked token field');
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'fixture-not-a-real-credential');
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          await waitFor(() => [...document.querySelectorAll('button')].find(b => b.textContent === '設定する' && !b.disabled));
+          clickText('設定する');
+          await waitFor(() => document.querySelector('.connection-message')?.textContent.includes('設定しました'));
+          if (input.value !== '') throw new Error('Token input retained secret');
+          if (JSON.stringify(localStorage).includes('fixture-not-a-real-credential')) throw new Error('Token stored in localStorage');
+          const status = await window.electron.v2exSettings({ kind: 'status' });
+          if (!status.configured || JSON.stringify(status).includes('fixture-not-a-real-credential')) throw new Error('Unsafe status');
+          clickText('接続を確認');
+          await waitFor(() => document.querySelector('.connection-message')?.textContent.includes('接続を確認しました'));
+        })()`);
+        await new Promise(r => setTimeout(r, 250));
+        await win.webContents.capturePage();
+        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-settings.png'), (await win.webContents.capturePage()).toPNG());
+        const encryptedFile = path.join(process.env.SMOKE_USER_DATA, 'v2ex-token.bin');
+        const connectionStatus = await run('window.electron.v2exSettings({ kind: "status" })');
+        if (connectionStatus.persistent) {
+          const encrypted = fs.readFileSync(encryptedFile);
+          assert.equal(encrypted.includes('fixture-not-a-real-credential'), false);
+          assert.equal(electron.safeStorage.decryptString(encrypted), 'fixture-not-a-real-credential');
+        }
+        await run(`(async () => {
+          clickText('閉じる');
+          await waitFor(() => document.querySelector('.thread-card')?.textContent.includes('中文 AI fixture'));
+          document.querySelector('.favorite-board').click();
+          document.querySelector('.thread-card button').click();
+          document.querySelector('.thread-card').click();
+          await waitFor(() => document.querySelectorAll('.post-card').length === 2);
+          if (!document.querySelector('.post-body').textContent.includes('code <div> & 中文')) throw new Error('Plain content altered');
+          if (document.querySelector('.post-body img') || document.querySelector('.post-card .translate-block')) throw new Error('Unexpected remote content');
+          clickText('続きの投稿を読み込む');
+          await waitFor(() => document.querySelectorAll('.post-card').length === 3);
+          if (document.querySelectorAll('[data-post-id="reply:123"]').length !== 1) throw new Error('Duplicate replies');
+          clickText('続きの投稿を読み込む');
+          await waitFor(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '続きの投稿を読み込む'));
+          clickText('本文を保存');
+          await waitFor(() => document.body.textContent.includes('本文を保存しました'));
+        })()`);
+        await new Promise(r => setTimeout(r, 250));
+        await win.webContents.capturePage();
+        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-desktop.png'), (await win.webContents.capturePage()).toPNG());
+        await run(`(async () => {
+          document.querySelector('.post-body .internal-thread-link').click();
+          await waitFor(() => document.querySelector('.thread-heading')?.textContent.includes('Next V2EX fixture'));
+          if (!JSON.parse(localStorage.getItem('rift.tabs.v2')).tabs.some(t => t.source === 'v2ex' && t.thread === '124')) throw new Error('V2EX tab missing');
+          clickText('V2EX接続設定');
+          await waitFor(() => document.querySelector('#v2ex-token') && !document.querySelector('#v2ex-token').disabled);
+          clickText('トークンを削除');
+          await waitFor(() => document.querySelector('.connection-message')?.textContent.includes('削除しました'));
+          clickText('閉じる');
+          await waitFor(() => document.querySelectorAll('.post-card').length === 0);
+          const status = await window.electron.v2exSettings({ kind: 'status' });
+          if (status.configured) throw new Error('Token removal failed');
+          document.querySelectorAll('.library-nav-item')[2].click();
+          await waitFor(() => [...document.querySelectorAll('.saved-thread-open')].some(b => b.textContent.includes('中文 AI fixture')));
+          [...document.querySelectorAll('.saved-thread-open')].find(b => b.textContent.includes('中文 AI fixture')).click();
+          await waitFor(() => document.querySelector('.offline-thread')?.textContent.includes('中文 reply 124'));
+          if (JSON.stringify(localStorage).includes('fixture-not-a-real-credential')) throw new Error('Secret persisted in renderer');
+        })()`);
+        assert.equal(fs.existsSync(encryptedFile), false);
+        assert.equal(externalPrompts, externalBeforeV2ex);
+        win.setSize(430, 850);
+        await run(`(async () => {
+          clickText('V2EX接続設定');
+          await waitFor(() => document.querySelector('#v2ex-token') && !document.querySelector('#v2ex-token').disabled);
+          const box = document.querySelector('.connection-dialog').getBoundingClientRect();
+          if (box.left < 0 || box.right > innerWidth || box.height > innerHeight) throw new Error('Settings overflow on mobile');
+        })()`);
+        await new Promise(r => setTimeout(r, 250));
+        await win.webContents.capturePage();
+        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-mobile.png'), (await win.webContents.capturePage()).toPNG());
+        console.log('PASS: V2EX settings/masked token/OS encryption, API connection, nodes/topics/paging, favorites/tabs, plain Chinese text, internal links, offline save and credential deletion');
         clearTimeout(timeout);
         app.exit(0);
       } catch (error) { console.error(error); app.exit(1); }

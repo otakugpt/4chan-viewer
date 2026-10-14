@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, safeStorage } from "electron";
 import path from "path";
 import fs from "fs";
 import { pathToFileURL } from "node:url";
@@ -7,6 +7,8 @@ import { fiveRequest } from "./five";
 import { normalizeFiveImage, imageFilename, readFiveImage, downloadFiveImage } from "./five-media";
 
 import { confirmExternal } from "./external";
+import { createV2exVault } from "./v2ex-credentials";
+import { createV2exService } from "./v2ex";
 
 const DOWNLOAD_DELAY_MS = 500;
 const DOWNLOAD_RETRY_COUNT = 3;
@@ -24,6 +26,25 @@ ipcMain.handle("open-external", (event, url: unknown) => trustedSender(event) ? 
 
 ipcMain.handle("five-request", (event, request: unknown) => trustedSender(event)
   ? fiveRequest(request) : { error: "Unauthorized request" });
+let v2ex: { vault: ReturnType<typeof createV2exVault>; request: ReturnType<typeof createV2exService> } | undefined;
+function v2exClient() {
+  if (!v2ex) {
+    const vault = createV2exVault(path.join(app.getPath("userData"), "v2ex-token.bin"), safeStorage);
+    v2ex = { vault, request: createV2exService(vault.snapshot) };
+  }
+  return v2ex;
+}
+ipcMain.handle("v2ex-request", async (event, request: unknown) => {
+  if (!trustedSender(event)) return { error: "Unauthorized request" };
+  try { return await v2exClient().request(request); }
+  catch { return { error: "V2EXの接続を初期化できません。" }; }
+});
+ipcMain.handle("v2ex-settings", (event, request: unknown): V2exCredentialStatus => {
+  const failure = (error: string) => ({ configured: false, persistent: false, canPersist: false, error });
+  if (!trustedSender(event)) return failure("Unauthorized request");
+  try { return v2exClient().vault.settings(request); }
+  catch { return failure("接続設定を読み取れませんでした。"); }
+});
 ipcMain.handle("five-image", async (event, url: unknown): Promise<RemoteImageResult> => {
   if (!trustedSender(event)) return { error: "Unauthorized request" };
   try { return await readFiveImage(url); }

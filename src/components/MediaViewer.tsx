@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { RemoteImage } from "./RemoteImage";
 import { useSave } from "./SaveProvider";
-export interface MediaItem { postNo: number; full: string; thumb: string; filename: string; remote?: boolean; target: ImageTarget }
-export function MediaViewer({ items, initialIndex, onClose, onJump }: { items: MediaItem[]; initialIndex: number; onClose: () => void; onJump?: (no: number) => void }) {
+export interface MediaItem { postId: PostId; postNo: number; full: string; thumb: string; filename: string; remote?: boolean; target: ImageTarget }
+export function MediaViewer({ items, initialIndex, onClose, onJump }: { items: MediaItem[]; initialIndex: number; onClose: () => void; onJump?: (postId: PostId) => void }) {
   const { busy, status, save } = useSave();
   const [index, setIndex] = useState(initialIndex);
   const [failed, setFailed] = useState(false);
@@ -37,7 +37,7 @@ export function MediaViewer({ items, initialIndex, onClose, onJump }: { items: M
     <div className="viewer-toolbar">
       <button className="ui-btn" disabled={index === 0} onClick={() => move(-1)}>前へ (←)</button>
       <a className="ui-btn" href={item.full} target="_blank" rel="noopener noreferrer">外部で開く</a>
-      {onJump && <button className="ui-btn" onClick={() => onJump(item.postNo)}>元のレスへ</button>}
+      {onJump && <button className="ui-btn" onClick={() => onJump(item.postId)}>元のレスへ</button>}
       <button className="ui-btn" disabled={index === items.length - 1} onClick={() => move(1)}>次へ (→)</button>
     </div>
   </dialog>;

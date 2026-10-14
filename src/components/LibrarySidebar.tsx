@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { BoardList } from "./BoardList";
 import { boardName, favoriteBoards, moveBoard, toggleFavorite, useLibraries } from "../lib/library";
 import { useSavedThreads } from "../lib/savedThreads";
+import { enabledSources } from "../lib/sources";
 export type LibraryMode = "favorites" | "history" | "board" | "saved";
 export function LibrarySidebar({ source, selectedBoard, mode, onMode, onBoard }: {
   source: BoardSource; selectedBoard: string | null; mode: LibraryMode;
@@ -11,8 +12,8 @@ export function LibrarySidebar({ source, selectedBoard, mode, onMode, onBoard }:
   const saved = useSavedThreads();
   const [expanded, setExpanded] = useState(true);
   const boards = favoriteBoards();
-  const favoriteCount = data.sites['4chan'].threads.length + data.sites['5ch'].threads.length;
-  const historyCount = Object.keys(data.sites['4chan'].history).length + Object.keys(data.sites['5ch'].history).length;
+  const favoriteCount = enabledSources.reduce((sum, site) => sum + data.sites[site].threads.length, 0);
+  const historyCount = enabledSources.reduce((sum, site) => sum + Object.keys(data.sites[site].history).length, 0);
   return <aside className="panel-surface pane-flex library-sidebar">
     <div className="panel-header"><h2 className="panel-title">ライブラリ</h2></div>
     <nav className="library-nav" aria-label="ライブラリ">

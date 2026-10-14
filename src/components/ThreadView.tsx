@@ -7,11 +7,13 @@ import { saveThread } from "../lib/savedThreads";
 import { ReplyText } from "./ReplyText";
 import { TranslateButton } from "./TranslateButton";
 import { providers, imageBase } from "../lib/providers";
+import { requireReadyPage, mergePage, PageAccessError } from "../lib/pages";
+import { readBoundary } from "../lib/reading";
 import { plainText } from "../lib/text";
 import { recordVisit, getHistoryEpoch, getLibrary, getClearEpoch, rememberReading, toggleFavorite, useLibrary, setFilters } from "../lib/library";
 
 type Media = MediaItem;
-export function ThreadView({ source, board, threadId }: { source: BoardSource; board: string; threadId: number }) {
+export function ThreadView({ source, board, threadId }: { source: BoardSource; board: string; threadId: ThreadId }) {
   const provider = providers[source];
   const [posts, setPosts] = useState<PostInfo[]>([]);
   const currentPosts = useRef<PostInfo[]>([]);
@@ -21,7 +23,9 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
   const [notice, setNotice] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const refreshLock = useRef(false);
-  const [loadedIds, setLoadedIds] = useState<number[]>([threadId]);
+  const [loadedIds, setLoadedIds] = useState<ThreadId[]>([threadId]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const visitedCursors = useRef(new Set<string>());
   const [noMoreOlder, setNoMoreOlder] = useState(false);
   const [viewMode, setViewMode] = useState<"thread" | "gallery">("thread");
   const [viewer, setViewer] = useState<number | null>(null);
@@ -49,8 +53,12 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
 
   useEffect(() => {
     const controller = new AbortController(); requests.current = controller;
-    provider.posts(board, threadId, controller.signal).then(data => {
-      if (!controller.signal.aborted) { markVisit(data); currentPosts.current = data; setPosts(data); }
+    provider.posts(board, threadId, controller.signal).then(result => {
+      if (!controller.signal.aborted) {
+        const page = requireReadyPage(result), data = page.items;
+        markVisit(data); currentPosts.current = data; setPosts(data);
+        setNextCursor(provider.capabilities.postPages ? page.nextCursor : null);
+      }
     }).catch(e => { if (!controller.signal.aborted) setError(e.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -63,12 +71,15 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
     const epoch = getClearEpoch();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let lastPost = initialReading.current?.post ?? 0;
+    let anchor: { postId: PostId; order: number } | undefined;
     const sample = () => {
       const bottom = pane.getBoundingClientRect().bottom;
       const visible = [...pane.querySelectorAll<HTMLElement>("[data-post]")].filter(el => el.getBoundingClientRect().top < bottom);
-      lastPost = Number(visible[visible.length - 1]?.dataset.post ?? 0); lastScroll.current = pane.scrollTop;
+      const element = visible[visible.length - 1];
+      lastPost = Number(element?.dataset.post ?? 0); lastScroll.current = pane.scrollTop;
+      anchor = element ? { postId: element.dataset.postId!, order: Number(element.dataset.order) } : undefined;
     };
-    const record = () => { if (epoch === getClearEpoch() && visitEpoch.current === getHistoryEpoch(source, readingKey)) rememberReading(readingKey, lastPost, lastScroll.current, source); };
+    const record = () => { if (epoch === getClearEpoch() && visitEpoch.current === getHistoryEpoch(source, readingKey)) rememberReading(readingKey, lastPost, lastScroll.current, source, anchor); };
     const scroll = () => { sample(); clearTimeout(timer); timer = setTimeout(record, 250); };
     sample(); record(); pane.addEventListener("scroll", scroll); window.addEventListener("beforeunload", record);
     return () => { clearTimeout(timer); record(); pane.removeEventListener("scroll", scroll); window.removeEventListener("beforeunload", record); };
@@ -76,6 +87,8 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
 
   const hidden = (p: PostInfo) => provider.capabilities.references && ((p.id && library.filters.ids.includes(p.id)) || library.filters.words.some(word => plainText(p.com ?? "").includes(word)));
   const visiblePosts = posts.filter(p => (showHidden || !hidden(p)) && (!selectedId || p.id === selectedId));
+  const boundary = readBoundary(posts, initialReading.current);
+  const readIds = new Set(posts.slice(0, boundary + 1).map(post => post.postId));
   const mediaList = useMemo<Media[]>(() => {
     const seen = new Set<string>();
     const result: Media[] = [];
@@ -83,15 +96,15 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
       if (provider.capabilities.remoteImages) {
         if ((!showHidden && ((post.id && library.filters.ids.includes(post.id)) || library.filters.words.some(word => plainText(post.com ?? "").includes(word)))) || (selectedId && post.id !== selectedId)) continue;
         for (const url of post.media ?? []) if (!seen.has(url) && result.length < 2000) {
-          seen.add(url); result.push({ postNo: post.no, full: url, thumb: url, filename: new URL(url).pathname.split("/").pop()!, remote: true, target: { source: "5ch", url } });
+          seen.add(url); result.push({ postId: post.postId, postNo: post.no, full: url, thumb: url, filename: new URL(url).pathname.split("/").pop()!, remote: true, target: { source, url } });
         }
       } else if (post.tim && post.ext) {
         const filename = `${post.tim}${post.ext}`;
-        result.push({ postNo: post.no, filename, full: `${imageBase()}/${board}/${filename}`, thumb: `${imageBase()}/${board}/${post.tim}s.jpg`, target: { url: `https://i.4cdn.org/${board}/${filename}`, filename } });
+        result.push({ postId: post.postId, postNo: post.no, filename, full: `${imageBase()}/${board}/${filename}`, thumb: `${imageBase()}/${board}/${post.tim}s.jpg`, target: { url: `https://i.4cdn.org/${board}/${filename}`, filename } });
       }
     }
     return result;
-  }, [posts, provider, board, library.filters, selectedId, showHidden]);
+  }, [posts, provider, source, board, library.filters, selectedId, showHidden]);
   useEffect(() => { setViewer(null); setPage(0); }, [library.filters, selectedId, showHidden]);
   const remote = provider.capabilities.remoteImages;
   const pageSize = remote ? 12 : mediaList.length || 1;
@@ -100,11 +113,11 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
   const allowImages = () => {
     if (window.confirm("外部画像ホストに接続するとIPアドレス等が相手に伝わります。対応画像（Imgur / Postimages / ImgBB、1枚8MB以内）を読み込みますか？")) setConsent(true);
   };
-  const jump = (no: number) => {
+  const jump = (postId: PostId) => {
     setViewMode("thread"); setSelectedId(null); setViewer(null);
-    requestAnimationFrame(() => scrollPane.current?.querySelector<HTMLElement>(`[data-post="${no}"]`)?.scrollIntoView({ block: "start" }));
+    requestAnimationFrame(() => [...(scrollPane.current?.querySelectorAll<HTMLElement>("[data-post-id]") ?? [])].find(element => element.dataset.postId === postId)?.scrollIntoView({ block: "start" }));
   };
-  const refresh = async (older = false) => {
+  const refresh = async (older = false, more = false) => {
     const signal = requests.current?.signal;
     if (!signal || signal.aborted || refreshLock.current) return;
     refreshLock.current = true; setRefreshing(true); setNotice("");
@@ -112,27 +125,39 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
       if (older && provider.archive) {
         const archive = await provider.archive(board, signal);
         if (signal.aborted) return;
-        const next = archive.filter(id => typeof id === "number" && id < loadedIds[loadedIds.length - 1] && !loadedIds.includes(id)).sort((a, b) => b - a)[0];
+        const next = archive.filter(id => Number(id) < Number(loadedIds[loadedIds.length - 1]) && !loadedIds.includes(id)).sort((a, b) => Number(b) - Number(a))[0];
         if (!next) { setNoMoreOlder(true); return; }
-        const data = await provider.posts(board, next, signal);
+        const result = await provider.posts(board, next, signal);
+        if (signal.aborted) return;
+        const data = requireReadyPage(result).items;
         if (!signal.aborted) { setPosts(prev => [...prev, ...data]); setLoadedIds(ids => [...ids, next]); }
       } else {
-        const data = await provider.posts(board, threadId, signal);
+        if (more && !nextCursor) return;
+        const result = await provider.posts(board, threadId, signal, more ? nextCursor! : undefined);
         if (!signal.aborted) {
-          const max = Math.max(0, ...posts.map(p => p.no));
-          setNotice(`新着 ${data.filter(p => p.no > max).length} 件${source === "5ch" ? "（更新間隔は最低10秒）" : ""}`);
+          const page = requireReadyPage(result);
+          if (!more) visitedCursors.current.clear();
+          else visitedCursors.current.add(nextCursor!);
+          if (page.nextCursor && visitedCursors.current.has(page.nextCursor)) throw new Error("ページの循環を検出しました。更新して再試行してください。");
+          const data = more ? mergePage(currentPosts.current, page.items, post => post.postId) : page.items;
+          const existing = new Set(currentPosts.current.map(post => post.postId));
+          setNotice(`新着 ${page.items.filter(p => !existing.has(p.postId)).length} 件${source === "5ch" ? "（更新間隔は最低10秒）" : ""}`);
           markVisit(data); currentPosts.current = data; setPosts(data); setLoadedIds([threadId]); setError(""); setNoMoreOlder(false); setViewer(null);
+          setNextCursor(provider.capabilities.postPages ? page.nextCursor : null);
         }
       }
-    } catch (e) { if (!signal.aborted) setNotice(e instanceof Error ? e.message : "取得に失敗しました。"); }
+    } catch (e) { if (!signal.aborted) {
+      if (e instanceof PageAccessError) { currentPosts.current = []; setPosts([]); setViewer(null); setNextCursor(null); setError(e.message); }
+      setNotice(e instanceof Error ? e.message : "取得に失敗しました。");
+    } }
     finally { refreshLock.current = false; if (!signal.aborted) setRefreshing(false); }
   };
   const saveText = async () => {
     if (!window.confirm("取得済みのこのスレッド本文をPC内に保存します（画像・訳文は含みません）。既存の保存本文がある場合は更新します。")) return;
     setSavingText(true); setNotice("");
     try {
-      await saveThread({ key: "", source, board, thread: threadId, title: (library.metadata[readingKey]?.title || plainText(currentPosts.current[0]?.sub ?? "") || readingKey).slice(0, 300), savedAt: Date.now(),
-        posts: currentPosts.current.map(p => ({ no: p.no, name: plainText(p.name ?? ""), date: plainText(p.date ?? ""), id: p.id ?? "", com: plainText(p.com ?? "") })) });
+      await saveThread({ version: 2, key: "", source, board, thread: threadId, title: (library.metadata[readingKey]?.title || plainText(currentPosts.current[0]?.sub ?? "") || readingKey).slice(0, 300), savedAt: Date.now(),
+        posts: currentPosts.current.map(p => ({ postId: p.postId, order: p.order, no: p.no, name: plainText(p.name ?? ""), date: plainText(p.date ?? ""), id: p.id ?? "", com: plainText(p.com ?? "") })) });
       setNotice("本文を保存しました。左の「保存済みスレッド」から読めます。");
     } catch (e) { setNotice(e instanceof Error ? e.message : "本文を保存できませんでした。"); }
     finally { setSavingText(false); }
@@ -143,34 +168,35 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
 
   return <div className="panel-surface pane-flex">
     <div className="panel-header">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="panel-title thread-heading">{library.metadata[readingKey]?.title || `/${board}/ No.${threadId}`}</h2><p className="meta mt-1 text-[11px] text-slate-400">{source}{source === "5ch" && posts[0]?.archived ? " · 公式過去ログ" : ""} · Posts {posts.length} / Images {mediaList.length}</p></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="panel-title thread-heading">{plainText(posts[0]?.sub ?? "") || library.metadata[readingKey]?.title || `/${board}/ No.${threadId}`}</h2><p className="meta mt-1 text-[11px] text-slate-400">{source}{source === "5ch" && posts[0]?.archived ? " · 公式過去ログ" : ""} · Posts {posts.length}{source !== "v2ex" && ` / Images ${mediaList.length}`}</p></div>
         <div className="flex flex-wrap gap-2">
           <button className="ui-btn" aria-pressed={library.threads.includes(readingKey)} onClick={() => toggleFavorite("threads", readingKey, source, plainText(posts[0]?.sub ?? ""))}>{library.threads.includes(readingKey) ? "お気に入り解除" : "お気に入り"}</button>
           <button className={`ui-btn ${viewMode === "thread" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("thread")}>Thread</button>
-          <button className={`ui-btn ${viewMode === "gallery" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("gallery")}>Gallery</button>
+          {source !== "v2ex" && <button className={`ui-btn ${viewMode === "gallery" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("gallery")}>Gallery</button>}
           <button className="ui-btn" disabled={refreshing} onClick={() => refresh()}>更新</button>
           <button className="ui-btn save-thread-text" disabled={savingText || refreshing} onClick={() => void saveText()}>{savingText ? "本文保存中…" : "本文を保存"}</button>
-          <button className="ui-btn ui-btn--primary" disabled={busy || !mediaList.length || (remote && !consent)} onClick={() => save(mediaList)}>{busy ? "保存中…" : "Save all"}</button>
+          {source !== "v2ex" && <button className="ui-btn ui-btn--primary" disabled={busy || !mediaList.length || (remote && !consent)} onClick={() => save(mediaList)}>{busy ? "保存中…" : "Save all"}</button>}
         </div>
       </div>
       {provider.capabilities.references && <details className="reader-options"><summary>閲覧設定・非表示設定</summary>
         <label><input type="checkbox" checked={aa} onChange={e => setAa(e.target.checked)} /> AA表示</label>
         <label><input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} /> 非表示レスを一時表示</label>
-        <button className="ui-btn" onClick={() => { const unread = posts.find(p => p.no > (initialReading.current?.post ?? 0)); if (unread) jump(unread.no); }}>未読位置へ</button>
+        <button className="ui-btn" onClick={() => { const unread = posts[boundary + 1]; if (unread) jump(unread.postId); }}>未読位置へ</button>
         <label>非表示ワード（1行1件・文字列一致）<textarea value={wordsDraft} onChange={e => setWordsDraft(e.target.value)} /></label>
         <label>非表示ID（1行1件）<textarea value={idsDraft} onChange={e => setIdsDraft(e.target.value)} /></label>
         <button className="ui-btn" onClick={() => setFilters({ words: wordsDraft.split("\n").map(s => s.trim()), ids: idsDraft.split("\n").map(s => s.trim()) }, source)}>非表示設定を保存</button>
       </details>}
       {selectedId && <button className="ui-btn mt-2" onClick={() => setSelectedId(null)}>ID: {selectedId} の絞り込みを解除</button>}
       {notice && <p className="reader-notice" role="status">{notice}</p>}
+      {source === "v2ex" && nextCursor && <p className="reader-notice">未取得の返信がある場合は下の「続きの投稿を読み込む」で取得できます。本文保存の対象は取得済みの投稿だけです。</p>}
       {remote && <div className="image-consent"><span>外部画像は自動取得しません。対応: Imgur / Postimages / ImgBB</span>{!consent ? <button className="ui-btn" onClick={allowImages}>画像を読み込む</button> : <button className="ui-btn" onClick={() => { setConsent(false); setViewer(null); }}>画像の表示を停止</button>}</div>}
     </div>
     <div ref={scrollPane} className="list-scroll">
       {viewMode === "thread" ? visiblePosts.map((post, index) => {
         const text = plainText(post.com ?? "");
-        const media = mediaList.find(m => m.postNo === post.no);
-        return <article key={post.no} data-post={post.no} className="post-card animate-enter" style={{ animationDelay: `${Math.min(index, 24) * 12}ms` }}>
-          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold">{plainText(post.name || "Anonymous")}</span><span className="meta text-[11px] text-slate-400">{post.no <= (initialReading.current?.post ?? 0) ? "既読 · " : ""}No.{post.no}</span></div>
+        const media = mediaList.find(m => m.postId === post.postId);
+        return <article key={post.postId} data-post={post.no} data-post-id={post.postId} data-order={post.order} className="post-card animate-enter" style={{ animationDelay: `${Math.min(index, 24) * 12}ms` }}>
+          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold">{plainText(post.name || "Anonymous")}</span><span className="meta text-[11px] text-slate-400">{readIds.has(post.postId) ? "既読 · " : ""}No.{post.no}</span></div>
           {post.date && <p className="meta text-xs mt-2">{plainText(post.date)}</p>}
           {post.id && <div className="flex gap-2 mt-2"><button className="ui-btn" onClick={() => setSelectedId(post.id!)}>ID: {post.id}</button><button className="ui-btn" onClick={() => setFilters({ ...library.filters, ids: [...library.filters.ids, post.id!] }, source)}>IDを非表示</button></div>}
           {media && !remote && <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
@@ -178,7 +204,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
             <div className="flex gap-2"><button className="ui-btn ui-btn--primary ui-btn--small" disabled={busy} onClick={() => save([media])}>Save image</button><a className="ui-btn" href={media.full} target="_blank" rel="noopener noreferrer">Open full</a></div>
           </div>}
           <div className={`post-body mt-3 whitespace-pre-wrap text-sm leading-relaxed ${aa ? "aa-body" : ""}`}>{provider.capabilities.references ? <ReplyText text={text} posts={visiblePosts} onJump={jump} /> : <UrlText text={text || "(no comment)"} />}</div>
-          {remote && (post.media?.length ?? 0) > 0 && <button className="ui-btn mt-2" onClick={() => { setViewMode("gallery"); setPage(Math.floor(Math.max(0, mediaList.findIndex(m => m.postNo === post.no)) / pageSize)); }}>画像 {post.media!.length} 件を一覧で見る</button>}
+          {remote && (post.media?.length ?? 0) > 0 && <button className="ui-btn mt-2" onClick={() => { setViewMode("gallery"); setPage(Math.floor(Math.max(0, mediaList.findIndex(m => m.postId === post.postId)) / pageSize)); }}>画像 {post.media!.length} 件を一覧で見る</button>}
           {provider.capabilities.translation && post.com && <TranslateButton text={text} className="mt-3" />}
         </article>;
       }) : <>
@@ -188,7 +214,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
             {remote ? consent ? <RemoteImage url={media.full} alt={`post-${media.postNo}`} className="gallery-thumb" /> : <div className="media-placeholder">未読み込み<br />{new URL(media.full).hostname}</div> : <img src={media.thumb} alt={`gallery-${media.postNo}`} className="gallery-thumb" />}
           </div>
           <div className="gallery-meta"><label><input type="checkbox" aria-label={`画像 ${index + 1} を選択`} checked={selected.has(media.full)} onChange={e => setSelected(prev => { const next = new Set(prev); if (e.target.checked) next.add(media.full); else next.delete(media.full); return next; })} /> No.{media.postNo}</label><button className="ui-btn ui-btn--primary ui-btn--small" disabled={busy || (remote && !consent)} onClick={() => save([media])}>Save</button></div>
-          <button className="ui-btn m-2" onClick={() => jump(media.postNo)}>元のレスへ</button>
+          <button className="ui-btn m-2" onClick={() => jump(media.postId)}>元のレスへ</button>
         </div>)}</div>
         {!mediaList.length && <p className="empty-state">対応する画像がありません。外部画像は許可ホストのHTTPS直リンクのみ対象です。</p>}
         {remote && mediaList.length > pageSize && <div className="gallery-tools"><button className="ui-btn" disabled={pageIndex === 0} onClick={() => setPage(pageIndex - 1)}>前の画像</button><span>{pageIndex + 1} / {Math.ceil(mediaList.length / pageSize)}</span><button className="ui-btn" disabled={(pageIndex + 1) * pageSize >= mediaList.length} onClick={() => setPage(pageIndex + 1)}>次の画像</button></div>}
@@ -196,6 +222,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
       {viewMode === "thread" && !visiblePosts.length && <p className="empty-state">表示対象がありません。非表示設定やIDの絞り込みを確認してください。</p>}
     </div>
     {viewer !== null && mediaList[viewer] && <MediaViewer items={mediaList} initialIndex={viewer} onClose={() => setViewer(null)} onJump={jump} />}
+    {nextCursor && <div className="panel-footer"><button className="ui-btn w-full" disabled={refreshing} onClick={() => refresh(false, true)}>続きの投稿を読み込む</button></div>}
     {provider.capabilities.archive && !noMoreOlder && <div className="panel-footer"><button className="ui-btn w-full" disabled={refreshing} onClick={() => refresh(true)}>{refreshing ? "Loading older thread..." : "Load older thread"}</button></div>}
   </div>;
 }

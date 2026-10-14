@@ -1,15 +1,16 @@
 import React, { useMemo, useState } from "react";
 import { boardName, deleteHistory, setHistoryEnabled, toggleFavorite, useLibraries } from "../lib/library";
-export function LibraryList({ mode, onSelect, active }: { mode: 'favorites' | 'history'; onSelect: (source: BoardSource, board: string, thread: number) => void; active: string }) {
+import { enabledSources, sources } from "../lib/sources";
+export function LibraryList({ mode, onSelect, active }: { mode: 'favorites' | 'history'; onSelect: (source: BoardSource, board: string, thread: ThreadId) => void; active: string }) {
   const data = useLibraries();
   const [query, setQuery] = useState('');
   const [site, setSite] = useState<BoardSource | 'all'>('all');
   const [sort, setSort] = useState('recent');
-  const rows = useMemo(() => (['4chan', '5ch'] as BoardSource[]).flatMap(source => {
+  const rows = useMemo(() => enabledSources.flatMap(source => {
     const library = data.sites[source];
     return (mode === 'favorites' ? library.threads : Object.keys(library.history)).map((key, order) => {
       const [board, id] = key.split('/');
-      return { source, key, board, thread: Number(id), title: library.metadata[key]?.title || `/${board}/ No.${id}`, boardName: boardName(source, board),
+      return { source, key, board, thread: id, title: library.metadata[key]?.title || `/${board}/ No.${id}`, boardName: boardName(source, board),
         visited: library.history[key] ?? 0, added: library.metadata[key]?.added ?? 0, order, favorite: library.threads.includes(key), reading: library.reads[key] };
     });
   }).filter(row => (site === 'all' || row.source === site) && `${row.title} ${row.boardName} ${row.board} ${row.thread}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
@@ -24,7 +25,7 @@ export function LibraryList({ mode, onSelect, active }: { mode: 'favorites' | 'h
       <div className="flex justify-between items-center gap-2"><h2 className="panel-title">{mode === 'favorites' ? 'お気に入りスレッド' : '閲覧履歴'}</h2><span className="meta">{rows.length}</span></div>
       <input className="panel-search" aria-label="保存スレッドを検索" placeholder="タイトル・板名で検索" value={query} onChange={e => setQuery(e.target.value)} />
       <div className="library-list-tools">
-        <select aria-label="保存スレッドのサイト" value={site} onChange={e => setSite(e.target.value as typeof site)}><option value="all">すべてのサイト</option><option value="4chan">4chan</option><option value="5ch">5ch</option></select>
+        <select aria-label="保存スレッドのサイト" value={site} onChange={e => setSite(e.target.value as typeof site)}><option value="all">すべてのサイト</option>{enabledSources.map(source => <option key={source} value={source}>{sources[source].label}</option>)}</select>
         {mode === 'favorites' && <select aria-label="お気に入りの並び順" value={sort} onChange={e => setSort(e.target.value)}><option value="recent">最近読んだ順</option><option value="added">登録順</option></select>}
       </div>
       {mode === 'history' && <details className="history-options"><summary>履歴の設定・消去</summary>

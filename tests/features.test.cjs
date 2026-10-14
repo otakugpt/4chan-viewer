@@ -1,17 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-const ts = require('typescript');
-function load(file, globals = {}) {
-  const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  const exports = {};
-  vm.runInNewContext(code, { exports, require, console, ...globals }, { filename: file });
-  return exports;
-}
+const { load } = require('./helpers/load-renderer.cjs');
 test('reading data validates storage, bounds favorites and supports deletion', () => {
   let stored;
-  const lib = load('src/lib/library.ts', { localStorage: { getItem: () => '{broken', setItem: (_key, value) => { stored = value; } } });
+  const lib = load('src/lib/library.ts', { localStorage: { getItem: () => stored ?? null, setItem: (_key, value) => { stored = value; } } });
   assert.equal(lib.getLibrary().boards.length, 0);
   lib.toggleFavorite('boards', 'g');
   lib.toggleFavorite('boards', '../bad');
@@ -22,7 +14,7 @@ test('reading data validates storage, bounds favorites and supports deletion', (
   lib.rememberReading('g/123', 124, 200);
   assert.equal(lib.getLibrary().reads['g/123'].post, 125);
   const restored = lib.parseLibrary(JSON.stringify(JSON.parse(stored).sites["4chan"]));
-  assert.equal(restored.last.thread, 123);
+  assert.equal(restored.last.thread, '123');
   assert.equal(restored.boards.length, 1);
   assert.equal(restored.reads['g/123'].scroll, 200);
   const epoch = lib.getClearEpoch();
@@ -57,14 +49,14 @@ test('translation shares in-flight requests, caches successes and retries errors
 test('legacy 4chan library migrates without collisions and clearing removes legacy data', () => {
   const disk = new Map([['4chan-viewer.library.v1', JSON.stringify({ version: 1, boards: ['g'], threads: ['g/100'], reads: {}, last: { board: 'g', thread: 100 } })]]);
   const lib = load('src/lib/library.ts', { localStorage: { getItem: key => disk.get(key) ?? null, setItem: (key, value) => disk.set(key, value), removeItem: key => disk.delete(key) } });
-  assert.equal(lib.getLibrary('4chan').last.thread, 100);
+  assert.equal(lib.getLibrary('4chan').last.thread, '100');
   assert.equal(lib.getLibrary('5ch').last, null);
-  lib.toggleFavorite('threads', 'g/100', '5ch');
-  lib.recordVisit('g/100', '5ch');
-  lib.rememberReading('g/100', 7, 100, '5ch');
+  lib.toggleFavorite('threads', 'g/1608930977', '5ch');
+  lib.recordVisit('g/1608930977', '5ch');
+  lib.rememberReading('g/1608930977', 7, 100, '5ch');
   lib.selectSource('5ch');
   assert.equal(lib.getLibrary('4chan').reads['g/100'], undefined);
-  assert.equal(JSON.parse(disk.get('rift.library.v2')).sites['4chan'].threads[0], 'g/100');
+  assert.equal(JSON.parse(disk.get('rift.library.v3')).sites['4chan'].threads[0], 'g/100');
   assert.equal(lib.getSource(), '5ch');
   lib.clearLibrary();
   assert.equal(disk.has('4chan-viewer.library.v1'), false);
@@ -95,7 +87,7 @@ test('library migration keeps favorites and promotes old reading timestamps to h
   const storage = { getItem: k => disk.get(k) ?? null, setItem: (k, v) => disk.set(k, v), removeItem: k => disk.delete(k) };
   let lib = load('src/lib/library.ts', { localStorage: storage });
   assert.equal(lib.getLibrary().history['g/123'], 1000);
-  lib.rememberTitles([{ no: 123, sub: 'Saved title' }], 'g', '4chan');
+  lib.rememberTitles([{ threadId: '123', sub: 'Saved title' }], 'g', '4chan');
   lib.deleteHistory('4chan', 'g/123');
   lib.rememberReading('g/123', 5, 300);
   lib = load('src/lib/library.ts', { localStorage: storage });

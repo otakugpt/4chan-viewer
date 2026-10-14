@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { plainText } from "../lib/text";
 import { UrlText } from "./UrlText";
-export function ReplyText({ text, posts, onJump }: { text: string; posts: PostInfo[]; onJump: (no: number) => void }) {
+export function ReplyText({ text, posts, onJump }: { text: string; posts: PostInfo[]; onJump: (postId: PostId) => void }) {
   const [preview, setPreview] = useState<number | null>(null);
   const target = preview === null ? null : posts.find(p => p.no === preview);
   return <div className="reply-text">
@@ -9,7 +9,7 @@ export function ReplyText({ text, posts, onJump }: { text: string; posts: PostIn
       ? <button key={i} className="reply-anchor" onMouseEnter={() => setPreview(Number(part.match(/\d+/)![0]))} onFocus={() => setPreview(Number(part.match(/\d+/)![0]))} onClick={() => setPreview(Number(part.match(/\d+/)![0]))}>{part}</button>
       : <UrlText key={i} text={part} />)}
     {preview !== null && <aside className="reply-preview" aria-label="参照レス">
-      <div className="flex gap-2"><strong>No.{preview}</strong><button className="ui-btn" onClick={() => setPreview(null)}>閉じる</button>{target && <button className="ui-btn" onClick={() => { onJump(preview); setPreview(null); }}>レスへ移動</button>}</div>
+      <div className="flex gap-2"><strong>No.{preview}</strong><button className="ui-btn" onClick={() => setPreview(null)}>閉じる</button>{target && <button className="ui-btn" onClick={() => { onJump(target.postId); setPreview(null); }}>レスへ移動</button>}</div>
       <p><UrlText text={target ? plainText(target.com ?? "") : "このレスはまだ取得されていません。"} /></p>
     </aside>}
   </div>;

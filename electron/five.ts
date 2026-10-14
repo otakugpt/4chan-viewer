@@ -21,13 +21,13 @@ export function parseMenu(html: string): Board[] {
   }
   return [...boards.values()];
 }
-export function parseSubjects(text: string): ThreadInfo[] {
+export function parseSubjects(text: string): RawThreadInfo[] {
   return text.split(/\r?\n/).flatMap(line => {
     const m = /^(\d{9,13})\.dat<>(.*)\s+\((\d+)\)\s*$/.exec(line);
     return m ? [{ no: Number(m[1]), sub: m[2].trim(), replies: Number(m[3]) }] : [];
   }).slice(0, 5000);
 }
-export function parseDat(text: string): PostInfo[] {
+export function parseDat(text: string): RawPostInfo[] {
   const lines = text.replace(/\r/g, "").split("\n");
   if (!lines[lines.length - 1]) lines.pop();
   if (!lines.some(line => line.split("<>").length >= 5)) throw new Error("Invalid DAT");

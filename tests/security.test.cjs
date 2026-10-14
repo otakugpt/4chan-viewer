@@ -131,6 +131,11 @@ test('main IPC checks window, document and main frame and serializes translation
   assert.match((await invoke({ ...event, senderFrame: { url: event.senderFrame.url } }, 'hello')).error, /Unauthorized/);
   assert.match((await invoke({ ...event, sender: { id: 999 } }, 'hello')).error, /Unauthorized/);
   const actual = event.senderFrame.url;
+  for (const channel of ['v2ex-request', 'v2ex-settings']) {
+    for (const untrusted of [{ ...event, senderFrame: null }, { ...event, senderFrame: { url: actual } }, { ...event, sender: { id: 999 } }]) {
+      assert.match((await handlers[channel](untrusted, { kind: 'status' })).error, /Unauthorized/);
+    }
+  }
   event.senderFrame.url = 'https://evil.test/';
   assert.match((await handlers['open-external'](event, 'https://example.test')).error, /Unauthorized/);
   assert.match((await invoke(event, 'hello')).error, /Unauthorized/);
@@ -159,6 +164,8 @@ test('preload exposes scoped operations and never forwards Electron events', asy
   assert.deepEqual(await api.translate('hello'), ['translate-text', 'hello']);
   assert.equal(api.invoke, undefined);
   assert.deepEqual(await api.saveImages([]), ['save-images', []]);
+  assert.deepEqual(await api.v2exRequest({ kind: 'check' }), ['v2ex-request', { kind: 'check' }]);
+  assert.deepEqual(await api.v2exSettings({ kind: 'status' }), ['v2ex-settings', { kind: 'status' }]);
   for (const [method, channel] of [['onProgress', 'save-progress']]) {
     let args;
     const remove = api[method]((...values) => { args = values; });

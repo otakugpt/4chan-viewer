@@ -8,3 +8,4 @@ dist-electron/
 .DS_Store
 .tools/
 .test-artifacts/
+v2ex-token.bin*

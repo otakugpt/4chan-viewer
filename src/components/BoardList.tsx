@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { rememberBoards, useLibrary, toggleFavorite } from "../lib/library";
 
 import { providers } from "../lib/providers";
+import { requireReadyPage } from "../lib/pages";
 
 interface BoardListProps {
   source: BoardSource;
@@ -28,13 +29,12 @@ export const BoardList: React.FC<BoardListProps> = ({
     const controller = new AbortController();
     setLoading(true);
     setError(null);
+    setBoards([]);
 
     provider.boards(controller.signal)
-      .then((data) => {
+      .then((page) => {
         if (controller.signal.aborted) return;
-        if (!Array.isArray(data)) {
-          throw new Error("Invalid response structure");
-        }
+        const data = requireReadyPage(page).items;
         setBoards(data); rememberBoards(data, source);
       })
       .catch((err) => {
