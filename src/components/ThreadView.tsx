@@ -115,7 +115,10 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
   const pageIndex = Math.min(page, Math.max(0, Math.ceil(mediaList.length / pageSize) - 1));
   const currentMedia = mediaList.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
   const allowImages = () => {
-    if (window.confirm("外部画像ホストに接続するとIPアドレス等が相手に伝わります。対応画像（Imgur / Postimages / ImgBB、1枚8MB以内）を読み込みますか？")) setConsent(true);
+    if (!mediaList.length || !window.confirm("外部画像ホストに接続するとIPアドレス等が相手に伝わります。対応画像（Imgur / Postimages / ImgBB、1枚8MB以内）を読み込みますか？")) return false;
+    setConsent(true);
+    setViewMode("gallery");
+    return true;
   };
   const jump = (postId: PostId) => {
     setViewMode("thread"); setSelectedId(null); setViewer(null);
@@ -177,10 +180,10 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
         <div className="flex flex-wrap gap-2">
           <button className="ui-btn" aria-pressed={library.threads.includes(readingKey)} onClick={() => toggleFavorite("threads", readingKey, source, plainText(posts[0]?.sub ?? ""))}>{library.threads.includes(readingKey) ? "お気に入り解除" : "お気に入り"}</button>
           <button className={`ui-btn ${viewMode === "thread" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("thread")}>Thread</button>
-          {(source === "4chan" || remote) && <button className={`ui-btn ${viewMode === "gallery" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("gallery")}>Gallery</button>}
+          {(source === "4chan" || remote) && <button className={`ui-btn ${viewMode === "gallery" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("gallery")}>{source === "ptt" ? `画像一覧 (${mediaList.length})` : "Gallery"}</button>}
           <button className="ui-btn" disabled={refreshing} onClick={() => refresh()}>更新</button>
           <button className="ui-btn save-thread-text" disabled={savingText || refreshing} onClick={() => void saveText()}>{savingText ? "本文保存中…" : "本文を保存"}</button>
-          {(source === "4chan" || remote) && <button className="ui-btn ui-btn--primary" disabled={busy || !mediaList.length || (remote && !consent)} onClick={() => save(mediaList)}>{busy ? "保存中…" : "Save all"}</button>}
+          {(source === "4chan" || remote) && <button className="ui-btn ui-btn--primary" disabled={busy || !mediaList.length || (remote && !consent)} onClick={() => save(mediaList)}>{busy ? "保存中…" : source === "ptt" ? "画像をすべて保存" : "Save all"}</button>}
         </div>
       </div>
       {provider.capabilities.references && <details className="reader-options"><summary>閲覧設定・非表示設定</summary>
@@ -195,7 +198,8 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
       {notice && <p className="reader-notice" role="status">{notice}</p>}
       {publicOnly && <div className="reader-notice"><p>公式フィードで公開された本文です。本文が省略される場合があります。画像取得・過去ページには対応しません。返信は試験取得で、表示件数が全件とは限りません。保存対象は取得済みの本文・返信だけです。</p><UrlText text={`原文: https://www.v2ex.com/t/${threadId}`} externalOnly /></div>}
       {source === "v2ex" && !publicOnly && nextCursor && <p className="reader-notice">未取得の返信がある場合は下の「続きの投稿を読み込む」で取得できます。本文保存の対象は取得済みの投稿だけです。</p>}
-      {remote && <div className="image-consent"><span>外部画像は自動取得しません。対応: Imgur / Postimages / ImgBB</span>{!consent ? <button className="ui-btn" onClick={allowImages}>画像を読み込む</button> : <button className="ui-btn" onClick={() => { setConsent(false); setViewer(null); }}>画像の表示を停止</button>}</div>}
+      {remote && <div className="image-consent"><span>{source === "ptt" ? mediaList.length ? `対応画像 ${mediaList.length} 件を検出。読み込み後に画像一覧を表示します。` : "対応画像は0件です。画像のない記事、または未対応の画像URLの可能性があります。" : "外部画像は自動取得しません。対応: Imgur / Postimages / ImgBB"}</span>{!consent ? <button className="ui-btn" disabled={!mediaList.length} onClick={allowImages}>画像を読み込む</button> : <button className="ui-btn" onClick={() => { setConsent(false); setViewer(null); }}>画像の表示を停止</button>}</div>}
+      {source === "ptt" && <details className="ptt-image-help"><summary>画像が表示されないとき</summary><p>本文・コメントから検出した、Imgur / Postimages / ImgBBのHTTPS画像直リンクだけが対象です。共有ページ・アルバム・短縮URL・動画・その他のサイトには対応していません。</p><p>「画像を読み込む」で外部接続に同意すると、一覧に最大12枚ずつ表示します。画像をクリックすると拡大でき、個別・選択・一括保存ができます。削除済み画像や8MiB・1600万画素の上限を超える画像などは取得できません。</p><p>「本文を保存」には画像は含まれません。画像は画像用の保存ボタンから、指定したフォルダへ保存してください。</p></details>}
     </div>
     <div ref={scrollPane} className="list-scroll">
       {viewMode === "thread" ? visiblePosts.map((post, index) => {
@@ -210,7 +214,12 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
             <div className="flex gap-2"><button className="ui-btn ui-btn--primary ui-btn--small" disabled={busy} onClick={() => save([media])}>Save image</button><a className="ui-btn" href={media.full} target="_blank" rel="noopener noreferrer">Open full</a></div>
           </div>}
           <div className={`post-body mt-3 whitespace-pre-wrap text-sm leading-relaxed ${aa ? "aa-body" : ""}`}>{provider.capabilities.references ? <ReplyText text={text} posts={visiblePosts} onJump={jump} /> : <UrlText text={text || "(no comment)"} />}</div>
-          {remote && (post.media?.length ?? 0) > 0 && <button className="ui-btn mt-2" onClick={() => { setViewMode("gallery"); setPage(Math.floor(Math.max(0, mediaList.findIndex(m => m.postId === post.postId)) / pageSize)); }}>画像 {post.media!.length} 件を一覧で見る</button>}
+          {remote && (post.media?.length ?? 0) > 0 && <button className="ui-btn mt-2 post-media-open" onClick={() => {
+            if (source === "ptt" && !consent && !allowImages()) return;
+            setViewMode("gallery");
+            const firstImage = mediaList.findIndex(m => post.media!.includes(m.full));
+            setPage(Math.floor(Math.max(0, firstImage) / pageSize));
+          }}>画像 {post.media!.length} 件を{source === "ptt" && !consent ? "読み込んで表示" : "一覧で見る"}</button>}
           {provider.capabilities.translation && post.com && <TranslateButton text={text} confirmSend={source === "v2ex" || source === "ptt"} className="mt-3" />}
         </article>;
       }) : <>
@@ -219,10 +228,10 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
           <div className="gallery-link" role="button" tabIndex={0} aria-label={`投稿 ${media.postNo} の画像を拡大`} onClick={() => { if (!remote || consent) setViewer(pageIndex * pageSize + index); }} onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); if (!remote || consent) setViewer(pageIndex * pageSize + index); } }}>
             {remote ? consent ? <RemoteImage url={media.full} alt={`post-${media.postNo}`} className="gallery-thumb" /> : <div className="media-placeholder">未読み込み<br />{new URL(media.full).hostname}</div> : <img src={media.thumb} alt={`gallery-${media.postNo}`} className="gallery-thumb" />}
           </div>
-          <div className="gallery-meta"><label><input type="checkbox" aria-label={`画像 ${index + 1} を選択`} checked={selected.has(media.full)} onChange={e => setSelected(prev => { const next = new Set(prev); if (e.target.checked) next.add(media.full); else next.delete(media.full); return next; })} /> No.{media.postNo}</label><button className="ui-btn ui-btn--primary ui-btn--small" disabled={busy || (remote && !consent)} onClick={() => save([media])}>Save</button></div>
+          <div className="gallery-meta"><label><input type="checkbox" aria-label={`画像 ${index + 1} を選択`} checked={selected.has(media.full)} onChange={e => setSelected(prev => { const next = new Set(prev); if (e.target.checked) next.add(media.full); else next.delete(media.full); return next; })} /> No.{media.postNo}</label><button className="ui-btn ui-btn--primary ui-btn--small" disabled={busy || (remote && !consent)} onClick={() => save([media])}>{source === "ptt" ? "この画像を保存" : "Save"}</button></div>
           <button className="ui-btn m-2" onClick={() => jump(media.postId)}>元のレスへ</button>
         </div>)}</div>
-        {!mediaList.length && <p className="empty-state">対応する画像がありません。外部画像は許可ホストのHTTPS直リンクのみ対象です。</p>}
+        {!mediaList.length && <p className="empty-state">対応する画像を検出できませんでした。画像のない記事や、未対応の画像URLの場合があります。外部画像は許可ホストのHTTPS直リンクのみ対象です。</p>}
         {remote && mediaList.length > pageSize && <div className="gallery-tools"><button className="ui-btn" disabled={pageIndex === 0} onClick={() => setPage(pageIndex - 1)}>前の画像</button><span>{pageIndex + 1} / {Math.ceil(mediaList.length / pageSize)}</span><button className="ui-btn" disabled={(pageIndex + 1) * pageSize >= mediaList.length} onClick={() => setPage(pageIndex + 1)}>次の画像</button></div>}
       </>}
       {viewMode === "thread" && !visiblePosts.length && <p className="empty-state">表示対象がありません。非表示設定やIDの絞り込みを確認してください。</p>}

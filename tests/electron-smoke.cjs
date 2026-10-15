@@ -60,6 +60,7 @@ Module._load = function (name, ...args) {
       const gate = board === 'Beauty' ? pttFixture.gate : '';
       if (url.endsWith('/index.html')) return pttFixture.response(gate + pttFixture.listing(board, '12', board === 'Beauty' ? 'Restricted fixture' : 'PTT fixture'));
       if (url.endsWith('/index12.html')) return pttFixture.response(gate + pttFixture.listing(board, null, 'Older PTT fixture').replaceAll(pttFixture.id, 'M.1789176237.A.A3E'));
+      if (url.endsWith('/M.1789176237.A.A3E.html')) return pttFixture.response(pttFixture.article(board));
       if (url.endsWith('/' + pttFixture.id + '.html')) return pttFixture.response(gate + pttFixture.article(board).replace('fixture signature', 'fixture signature <a href="https://i.ibb.co/abc1234/fixture.png">image</a>'));
       throw new Error('Unexpected PTT fixture URL');
     }
@@ -673,9 +674,16 @@ app.whenReady().then(() => {
             window.confirm = message => { if (!message.includes('DeepL')) throw new Error('Missing translation disclosure'); prompted++; return false; };
             translation.click(); await new Promise(r => setTimeout(r, 50));
             if (prompted !== 1 || document.querySelector('.translate-result')) throw new Error('Translation cancel ignored');
-            clickText('Gallery'); await waitFor(() => document.querySelector('.media-placeholder'));
-            if (document.querySelector('.gallery-thumb') || ![...document.querySelectorAll('button')].find(b => b.textContent === 'Save all').disabled) throw new Error('Images before consent');
             window.confirm = message => { if (!message.includes('IPアドレス')) throw new Error('Missing image disclosure'); return false; };
+            if (${source === 'PTT'}) {
+              if (!document.querySelector('.image-consent').textContent.includes('対応画像 1 件') || !document.querySelector('.ptt-image-help')) throw new Error('PTT image discovery missing');
+              document.querySelector('.post-media-open').click(); await new Promise(r => setTimeout(r, 50));
+              if (!document.querySelector('.post-body') || document.querySelector('.gallery-thumb')) throw new Error('Post image consent cancellation ignored');
+              clickText('画像を読み込む'); await new Promise(r => setTimeout(r, 50));
+              if (!document.querySelector('.post-body')) throw new Error('Image cancellation changed reading mode');
+            }
+            clickText('${source === 'PTT' ? '画像一覧 (1)' : 'Gallery'}'); await waitFor(() => document.querySelector('.media-placeholder'));
+            if (document.querySelector('.gallery-thumb') || ![...document.querySelectorAll('button')].find(b => b.textContent === '${source === 'PTT' ? '画像をすべて保存' : 'Save all'}').disabled) throw new Error('Images before consent');
             clickText('画像を読み込む'); await new Promise(r => setTimeout(r, 50));
             if (document.querySelector('.gallery-thumb')) throw new Error('Image cancel ignored');
           })()`);
@@ -683,9 +691,11 @@ app.whenReady().then(() => {
           cancelSave = false;
           const savesBefore = dialogCalls;
           await run(`(async () => {
+            clickText('Thread'); await waitFor(() => document.querySelector('.post-body'));
             window.confirm = () => true;
             clickText('画像を読み込む');
             await waitFor(() => document.querySelector('.gallery-thumb')?.src.startsWith('blob:'));
+            if (document.querySelector('.post-body')) throw new Error('Accepted images did not open gallery');
             document.querySelector('.gallery-link').click();
             await waitFor(() => document.querySelector('.media-viewer img')?.src.startsWith('blob:'));
             document.querySelector('.viewer-save').click();
@@ -704,9 +714,28 @@ app.whenReady().then(() => {
           win.setSize(1400, 900);
           await run(`(async () => {
             clickText('閉じる (Esc)');
+            if (${source === 'PTT'}) {
+              const saveAndWait = async button => {
+                button.click();
+                await waitFor(() => button.disabled);
+                await waitFor(() => !button.disabled && document.querySelector('.status-bar').textContent.includes('保存完了: 1/1'));
+              };
+              await saveAndWait(document.querySelector('.gallery-meta button'));
+              document.querySelector('.gallery-meta input').click();
+              await waitFor(() => !document.querySelector('.gallery-tools button').disabled);
+              await saveAndWait(document.querySelector('.gallery-tools button'));
+              await saveAndWait([...document.querySelectorAll('button')].find(b => b.textContent === '画像をすべて保存'));
+            }
             clickText('画像の表示を停止');
             await waitFor(() => document.querySelector('.media-placeholder') && !document.querySelector('.gallery-thumb'));
             clickText('Thread'); await waitFor(() => document.querySelector('.post-card .translate-block button'));
+            if (${source === 'PTT'}) {
+              document.querySelector('.post-media-open').click();
+              await waitFor(() => document.querySelector('.gallery-thumb')?.src.startsWith('blob:'));
+              clickText('画像の表示を停止');
+              await waitFor(() => !document.querySelector('.gallery-thumb'));
+              clickText('Thread'); await waitFor(() => document.querySelector('.post-body'));
+            }
             const original = document.querySelector('.post-body').textContent;
             document.querySelector('.post-card .translate-block button').click();
             await waitFor(() => document.querySelector('.post-card .translate-result')?.textContent.includes('smoke translation'));
@@ -717,6 +746,7 @@ app.whenReady().then(() => {
             await waitFor(() => document.querySelector('.post-card .translate-result'));
           })()`);
           assert.equal(translatedTexts.length, beforeTranslations + 1);
+          if (source === 'PTT') assert.equal(dialogCalls, savesBefore + 4);
           assert.ok(fiveImageReads > beforeImages);
           assert.ok(fs.readdirSync(process.env.SMOKE_USER_DATA).some(file => /^[a-f0-9]{24}(?:_\d+)?\.png$/.test(file)));
           console.log('PASS: ' + source + ' explicit translation/image consent and cancellation, original retention, cached toggle, safe blob viewer/save, stop display');
@@ -798,6 +828,20 @@ app.whenReady().then(() => {
           await waitFor(() => document.body.textContent.includes('本文を保存しました'));
         })()`);
         await exerciseChineseMedia('PTT');
+        const beforeEmptyImages = fiveImageReads;
+        await run(`(async () => {
+          document.querySelectorAll('.thread-card')[1].click();
+          await waitFor(() => document.querySelector('.image-consent')?.textContent.includes('対応画像は0件'));
+          let prompts = 0; window.confirm = () => { prompts++; return true; };
+          clickText('画像を読み込む');
+          if (prompts || ![...document.querySelectorAll('button')].find(b => b.textContent === '画像を読み込む').disabled) throw new Error('Empty images offered network consent');
+          clickText('画像一覧 (0)');
+          await waitFor(() => document.querySelector('.empty-state')?.textContent.includes('未対応の画像URL'));
+          document.querySelectorAll('.thread-card')[0].click();
+          await waitFor(() => document.querySelector('.post-body') && document.querySelector('.image-consent')?.textContent.includes('対応画像 1 件'));
+          if (document.querySelector('.gallery-thumb') || ![...document.querySelectorAll('button')].find(b => b.textContent === '画像をすべて保存').disabled) throw new Error('Image consent survived thread switch');
+        })()`);
+        assert.equal(fiveImageReads, beforeEmptyImages);
         await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); await new Promise(r => setTimeout(r, 500));
         fs.writeFileSync(path.join(__dirname, '../.test-artifacts/ptt-desktop.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         await run(`(async () => {

@@ -157,6 +157,10 @@ body {
 .ptt-guide summary { cursor: pointer; }
 .ptt-guide summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ptt-guide p { margin: 8px 0; }
+.ptt-image-help { margin-top: 6px; font-size: .75rem; color: var(--text-soft); line-height: 1.6; }
+.ptt-image-help summary { cursor: pointer; }
+.ptt-image-help summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ptt-image-help p { margin: 6px 0; }
 
 .list-scroll {
   flex: 1;
