@@ -10,9 +10,9 @@ const pttId = 'M.1789176238.A.A3E';
 const oldSite = { version: 2, boards: ['g'], threads: ['g/123'], history: { 'g/123': 1000 }, reads: { 'g/123': { post: 125, scroll: 600, updated: 1001 } }, metadata: { 'g/123': { title: 'Keep me', added: 900 } }, last: { board: 'g', thread: 123 } };
 const oldLibrary = JSON.stringify({ version: 2, currentSource: '4chan', sites: { '4chan': oldSite }, historyEnabled: false, boardOrder: ['4chan/g'] });
 
-test('source registry keeps unimplemented providers out of navigation', () => {
+test('source registry exposes the four implemented providers', () => {
   const { enabledSources, SOURCE_IDS } = load('src/lib/sources.ts');
-  assert.deepEqual(plain(enabledSources), ['4chan', '5ch', 'v2ex']);
+  assert.deepEqual(plain(enabledSources), ['4chan', '5ch', 'v2ex', 'ptt']);
   assert.deepEqual(plain(SOURCE_IDS), ['4chan', '5ch', 'v2ex', 'ptt']);
 });
 
@@ -90,7 +90,7 @@ test('all source libraries retain strings, isolate entries and clear disabled si
   lib.rememberReading('Soft_Job/' + pttId, 9, 300, 'ptt', { postId: 'comment:17', order: 9 });
   lib.rememberSelection('Soft_Job', pttId, 'ptt');
   lib.selectSource('ptt');
-  assert.equal(lib.getSource(), '4chan');
+  assert.equal(lib.getSource(), 'ptt');
   lib.toggleFavorite('threads', 'python/123', 'v2ex');
   lib.toggleFavorite('threads', 'python/123', '4chan');
   lib.deleteHistory('ptt');
@@ -191,15 +191,12 @@ test('page results never expose gated content through the ready-page accessor', 
   assert.deepEqual(plain(merged), [{ id: '1', text: 'new' }, { id: '2' }, { id: '3' }]);
 });
 
-test('disabled providers do not attempt requests; active adapters validate destinations first', async () => {
+test('adapters validate destinations before requesting', async () => {
   let requests = 0;
   const signal = new AbortController().signal;
   const { providers } = load('src/lib/providers.ts', { DOMException, location: { protocol: 'file:' }, fetch: async () => { requests++; throw new Error('unexpected'); }, window: { electron: { fiveRequest: async () => { requests++; throw new Error('unexpected'); } } } });
-  for (const source of ['ptt']) {
-    assert.equal((await providers[source].boards(signal)).status, 'unavailable');
-    assert.equal((await providers[source].threads('g', signal)).status, 'unavailable');
-    assert.equal((await providers[source].posts('g', '123', signal)).status, 'unavailable');
-  }
+  await assert.rejects(providers.ptt.threads('../x', signal));
+  await assert.rejects(providers.ptt.posts('Soft_Job', '123', signal));
   await assert.rejects(providers['4chan'].threads('../x', signal));
   await assert.rejects(providers['4chan'].posts('g', '../x', signal));
   await assert.rejects(providers['5ch'].posts('software', '123', signal));
@@ -220,4 +217,13 @@ test('4chan and 5ch adapters normalize IDs only at the provider boundary', async
   await providers['5ch'].posts('software', '1608930977', signal);
   assert.equal(calls[0].thread, 1608930977);
   assert.throws(() => normalizePosts([{ no: 1 }, { no: 1 }]));
+});
+
+test('PTT adapter blocks gated content and discards a cancelled IPC response', async () => {
+  let finish;
+  const { providers } = load('src/lib/providers.ts', { DOMException, window: { electron: { pttRequest: async request => request.kind === 'threads' ? { status: 'age-confirmation-required', threads: [{ sub: 'do not expose' }] } : new Promise(resolve => { finish = resolve; }) } } });
+  await assert.rejects(providers.ptt.threads('Beauty', new AbortController().signal), error => error.status === 'age-confirmation-required');
+  const controller = new AbortController(), result = providers.ptt.posts('Soft_Job', pttId, controller.signal);
+  controller.abort(); finish({ posts: [] });
+  await assert.rejects(result, { name: 'AbortError' });
 });

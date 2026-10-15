@@ -39,7 +39,7 @@ export function LibrarySidebar({ source, selectedBoard, mode, onMode, onBoard }:
         })}
       </section>
       <details className="all-boards" open={expanded} onToggle={e => setExpanded(e.currentTarget.open)}>
-        <summary>すべての板 <span>{source}</span></summary>
+        <summary>{source === "ptt" ? "人気の板" : "すべての板"} <span>{source}</span></summary>
         {expanded && <BoardList key={source} source={source} selectedBoard={selectedBoard} onSelect={board => onBoard(source, board)} />}
       </details>
     </div>

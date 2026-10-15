@@ -3,7 +3,7 @@ export const sources: Record<BoardSource, { label: string; enabled: boolean }> =
   "4chan": { label: "4chan", enabled: true },
   "5ch": { label: "5ch", enabled: true },
   v2ex: { label: "V2EX", enabled: true },
-  ptt: { label: "PTT", enabled: false },
+  ptt: { label: "PTT", enabled: true },
 };
 export const enabledSources = SOURCE_IDS.filter(source => sources[source].enabled);
 export const isSource = (value: unknown): value is BoardSource => typeof value === "string" && SOURCE_IDS.includes(value as BoardSource);

@@ -8,7 +8,7 @@ declare global {
   interface ThreadInfo extends Omit<RawThreadInfo, "no"> { threadId: ThreadId }
   interface RawPostInfo { archived?: boolean; no: number; sub?: string; com?: string; name?: string; tim?: number; ext?: string; date?: string; id?: string; media?: string[] }
   // no is a display/reference number; id remains the author's ID, not a post ID.
-  interface PostInfo extends RawPostInfo { postId: PostId; order: number }
+  interface PostInfo extends RawPostInfo { postId: PostId; order: number; reaction?: "推" | "噓" | "→" }
   type PageResult<T> = { status: "ready"; items: T[]; nextCursor: string | null }
     | { status: "age-confirmation-required" }
     | { status: "unavailable" };

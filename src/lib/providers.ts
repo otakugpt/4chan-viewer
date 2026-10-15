@@ -29,14 +29,6 @@ export function normalizePosts(items: RawPostInfo[]): PostInfo[] {
     return { ...item, postId: String(item.no), order: index + 1 };
   });
 }
-const disabled = (source: BoardSource): Provider => ({
-  source,
-  capabilities: { archive: false, translation: false, remoteImages: false, references: false, threadPages: false, postPages: false, ageConfirmation: source === "ptt" },
-  boards: async () => ({ status: "unavailable" }),
-  threads: async () => ({ status: "unavailable" }),
-  posts: async () => ({ status: "unavailable" }),
-  thumbnail: () => null,
-});
 const api = () => location.protocol === "file:" ? "https://a.4cdn.org" : "/api";
 export const imageBase = () => location.protocol === "file:" ? "https://i.4cdn.org" : "/img";
 async function json(path: string, signal: AbortSignal) {
@@ -57,6 +49,15 @@ async function v2ex(request: V2exRequest, signal: AbortSignal) {
   if (!window.electron?.v2exRequest) throw new Error("V2EX閲覧は Electron アプリで利用できます。");
   const result = await window.electron.v2exRequest(request);
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  if ("error" in result) throw result.accessDenied ? new PageAccessError("unavailable", result.error) : new Error(result.error);
+  return result;
+}
+async function ptt(request: PttRequest, signal: AbortSignal) {
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  if (!window.electron?.pttRequest) throw new Error("PTT閲覧はElectronアプリで利用できます。");
+  const result = await window.electron.pttRequest(request);
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  if ("status" in result) throw new PageAccessError("age-confirmation-required", "PTTの年齢確認が必要です。同意前に記事や一覧は表示しません。");
   if ("error" in result) throw result.accessDenied ? new PageAccessError("unavailable", result.error) : new Error(result.error);
   return result;
 }
@@ -106,5 +107,19 @@ export const providers: Record<BoardSource, Provider> = {
     },
     thumbnail: () => null,
   },
-  ptt: disabled("ptt"),
+  ptt: {
+    source: "ptt", capabilities: { archive: false, translation: false, remoteImages: false, references: false, threadPages: true, postPages: false, ageConfirmation: true },
+    boards: async signal => { const r = await ptt({ kind: "boards" }, signal); if ("boards" in r) return readyPage(r.boards); throw new Error("Invalid response"); },
+    threads: async (board, signal, cursor) => {
+      if (!validBoard("ptt", board)) throw new Error("Invalid destination");
+      const r = await ptt({ kind: "threads", board, cursor }, signal);
+      if ("threads" in r) return readyPage(r.threads, r.nextCursor); throw new Error("Invalid response");
+    },
+    posts: async (board, thread, signal, cursor) => {
+      validateTarget("ptt", board, thread, cursor);
+      const r = await ptt({ kind: "posts", board, thread }, signal);
+      if ("posts" in r) return readyPage(r.posts); throw new Error("Invalid response");
+    },
+    thumbnail: () => null,
+  },
 };

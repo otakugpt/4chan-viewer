@@ -11,6 +11,8 @@ declare global {
     fiveRequest: (request: FiveRequest) => Promise<FiveResult>;
     v2exRequest: (request: V2exRequest) => Promise<V2exResult>;
     v2exSettings: (request: V2exSettingsRequest) => Promise<V2exCredentialStatus>;
+    pttRequest: (request: PttRequest) => Promise<PttResult>;
+    pttConsent: (request: PttConsentRequest) => Promise<PttConsentStatus>;
     fiveImage: (url: string) => Promise<RemoteImageResult>;
     translate: (text: string) => Promise<{ translatedText: string } | { error: string }>;
     saveImages: (list: ImageTarget[]) => Promise<SaveResult>;

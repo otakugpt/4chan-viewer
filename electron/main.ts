@@ -9,6 +9,7 @@ import { normalizeFiveImage, imageFilename, readFiveImage, downloadFiveImage } f
 import { confirmExternal } from "./external";
 import { createV2exVault } from "./v2ex-credentials";
 import { createV2exService } from "./v2ex";
+import { createPttService } from "./ptt";
 
 const DOWNLOAD_DELAY_MS = 500;
 const DOWNLOAD_RETRY_COUNT = 3;
@@ -27,6 +28,24 @@ ipcMain.handle("open-external", (event, url: unknown) => trustedSender(event) ? 
 ipcMain.handle("five-request", (event, request: unknown) => trustedSender(event)
   ? fiveRequest(request) : { error: "Unauthorized request" });
 let v2ex: { vault: ReturnType<typeof createV2exVault>; request: ReturnType<typeof createV2exService> } | undefined;
+const ptt = createPttService();
+let confirmingPtt = false;
+ipcMain.handle("ptt-request", (event, request: unknown) => trustedSender(event) ? ptt.request(request) : { error: "Unauthorized request" });
+ipcMain.handle("ptt-consent", async (event, input: unknown): Promise<PttConsentStatus> => {
+  if (!trustedSender(event)) return { accepted: false, error: "Unauthorized request" };
+  const kind = input && typeof input === "object" ? (input as PttConsentRequest).kind : undefined;
+  if (kind === "status") return ptt.status();
+  if (kind === "revoke") { ptt.setConsent(false); return ptt.status(); }
+  if (kind !== "confirm" || !ptt.needsConsent() || confirmingPtt) return { ...ptt.status(), error: "確認対象のPTTページを開いてから操作してください。" };
+  confirmingPtt = true;
+  const generation = ptt.generation();
+  try {
+    const answer = await dialog.showMessageBox({ type: "warning", title: "PTTの年齢確認", message: "18歳以上であることを確認してください", detail: "PTTはこのページの閲覧に18歳以上の確認を求めています。18歳未満、または同意しない場合はキャンセルしてください。同意は今回のアプリ起動中のPTT閲覧に適用され、PTTへ over18=1 Cookieを送信します。上部の「PTT年齢確認を解除」で取り消せます。", buttons: ["キャンセル", "18歳以上で、閲覧に同意する"], defaultId: 0, cancelId: 0, noLink: true });
+    if (answer.response === 1 && trustedSender(event) && ptt.generation() === generation) ptt.setConsent(true);
+    return ptt.status();
+  } catch { return { ...ptt.status(), error: "年齢確認を開けませんでした。" }; }
+  finally { confirmingPtt = false; }
+});
 function v2exClient() {
   if (!v2ex) {
     const vault = createV2exVault(path.join(app.getPath("userData"), "v2ex-token.bin"), safeStorage);

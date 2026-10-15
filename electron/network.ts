@@ -31,7 +31,7 @@ export async function getBytes(raw: string, limit: number, headers: Record<strin
       headers: { "User-Agent": "RIFT/1.0 (read-only BBS viewer)", "Accept-Encoding": "identity", ...headers },
     }, response => {
       if ((response.statusCode ?? 0) >= 300 && (response.statusCode ?? 0) < 400 && response.statusCode !== 304) {
-        response.destroy(); reject(Object.assign(new Error("Redirect rejected"), { code: "REDIRECT" })); return;
+        response.destroy(); reject(Object.assign(new Error("Redirect rejected"), { code: "REDIRECT", location: response.headers.location?.slice(0, 2048) })); return;
       }
       if (response.headers["content-encoding"] && response.headers["content-encoding"] !== "identity") {
         response.destroy(); reject(new Error("Unexpected encoding")); return;

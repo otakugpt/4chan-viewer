@@ -30,6 +30,8 @@ global.fetch = async (url, options) => {
 let fiveImageReads = 0;
 let networkReads = 0;
 let externalPrompts = 0, allowExternal = false;
+let pttPrompts = 0, allowPtt = false;
+const pttCookies = [], pttFixture = require('./helpers/ptt-fixtures.cjs');
 const externalOpened = [];
 const fivePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB9sAAAAASUVORK5CYII=', 'base64');
 let dialogCalls = 0;
@@ -44,8 +46,19 @@ class HiddenWindow extends electron.BrowserWindow {
 Module._load = function (name, ...args) {
   // Fixture requests have no rate impact. Production still uses the 6.1-second queue.
   if (name === './v2ex') { const real = originalLoad.call(this, name, ...args); return { ...real, createV2exService: snapshot => real.createV2exService(snapshot, { spacing: 0 }) }; }
+  if (name === './ptt') { const real = originalLoad.call(this, name, ...args); return { ...real, createPttService: () => real.createPttService({ spacing: 0 }) }; }
   if (name === './network') return { ...originalLoad.call(this, name, ...args), getBytes: async (url, limit, headers = {}) => {
     networkReads++;
+    if (url.startsWith('https://www.ptt.cc/')) {
+      assert.equal(headers.Authorization, undefined); pttCookies.push(headers.Cookie);
+      if (url.endsWith('/bbs/index.html')) return pttFixture.response(pttFixture.boards);
+      const board = url.includes('/Beauty/') ? 'Beauty' : 'Soft_Job';
+      const gate = board === 'Beauty' ? pttFixture.gate : '';
+      if (url.endsWith('/index.html')) return pttFixture.response(gate + pttFixture.listing(board, '12', board === 'Beauty' ? 'Restricted fixture' : 'PTT fixture'));
+      if (url.endsWith('/index12.html')) return pttFixture.response(gate + pttFixture.listing(board, null, 'Older PTT fixture').replaceAll(pttFixture.id, 'M.1789176237.A.A3E'));
+      if (url.endsWith('/' + pttFixture.id + '.html')) return pttFixture.response(gate + pttFixture.article(board));
+      throw new Error('Unexpected PTT fixture URL');
+    }
     if (url.startsWith('https://www.v2ex.com/')) {
       const node = { name: 'python', title: 'Python fixture' };
       if (url.endsWith('/api/nodes/all.json')) { assert.equal(headers.Authorization, undefined); return { status: 200, headers: {}, body: Buffer.from(JSON.stringify([node])) }; }
@@ -75,7 +88,7 @@ Module._load = function (name, ...args) {
   } };
 
   if (name === './services') return { ...originalLoad.call(this, name, ...args), downloadImage: async url => { downloadedUrls.push(url); downloadCalls++; if (downloadCalls <= 3) throw new Error('Fixture download failure'); } };
-  return name === 'electron' ? { ...electron, BrowserWindow: HiddenWindow, shell: { openExternal: async url => { externalOpened.push(url); } }, dialog: { showMessageBox: async options => { assert.equal(options.message, "外部サイトへ遷移します"); externalPrompts++; return { response: allowExternal ? 1 : 0 }; }, showOpenDialog: async () => { dialogCalls++; await new Promise(r => setTimeout(r, 100)); return { canceled: cancelSave, filePaths: cancelSave ? [] : [process.env.SMOKE_USER_DATA] }; } } } : originalLoad.call(this, name, ...args);
+  return name === 'electron' ? { ...electron, BrowserWindow: HiddenWindow, shell: { openExternal: async url => { externalOpened.push(url); } }, dialog: { showMessageBox: async options => { if (options.message === '18歳以上であることを確認してください') { pttPrompts++; assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0); return { response: allowPtt ? 1 : 0 }; } assert.equal(options.message, "外部サイトへ遷移します"); externalPrompts++; return { response: allowExternal ? 1 : 0 }; }, showOpenDialog: async () => { dialogCalls++; await new Promise(r => setTimeout(r, 100)); return { canceled: cancelSave, filePaths: cancelSave ? [] : [process.env.SMOKE_USER_DATA] }; } } } : originalLoad.call(this, name, ...args);
 };
 const timeout = setTimeout(() => { console.error('Smoke test timed out'); app.exit(1); }, 90000);
 app.whenReady().then(() => {
@@ -197,24 +210,24 @@ app.whenReady().then(() => {
         const outputDir = path.resolve(__dirname, '../.test-artifacts');
         fs.mkdirSync(outputDir, { recursive: true });
         win.setSize(1401, 901); await new Promise(r => setTimeout(r, 100)); win.setSize(1400, 900); await new Promise(r => setTimeout(r, 200));
-        fs.writeFileSync(path.join(outputDir, 'rift-viewer-save.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'rift-viewer-save.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         win.setSize(390, 844); await new Promise(r => setTimeout(r, 200));
         assert.equal(await run('document.querySelector("dialog").scrollWidth <= document.querySelector("dialog").clientWidth'), true);
-        fs.writeFileSync(path.join(outputDir, 'rift-viewer-save-mobile.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'rift-viewer-save-mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         win.setSize(1400, 900);
         await run("document.querySelector('dialog .viewer-actions button:last-child').click()");
         win.setSize(1401, 901);
         await new Promise(r => setTimeout(r, 100));
         win.setSize(1400, 900);
         await new Promise(r => setTimeout(r, 250));
-        fs.writeFileSync(path.join(outputDir, 'desktop.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'desktop.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         win.setSize(390, 844);
         await new Promise(r => setTimeout(r, 200));
         assert.equal(await run('document.documentElement.scrollWidth <= window.innerWidth'), true);
-        fs.writeFileSync(path.join(outputDir, 'mobile.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         await run('document.querySelector(".post-card").scrollIntoView()');
         await new Promise(r => setTimeout(r, 200));
-        fs.writeFileSync(path.join(outputDir, 'mobile-thread.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'mobile-thread.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         win.setSize(1400, 900);
         await run(`(async () => {
           const pane = document.querySelector('.post-card').parentElement;
@@ -270,11 +283,11 @@ app.whenReady().then(() => {
         assert.equal(savedImages.length, 1);
         assert.deepEqual(fs.readFileSync(path.join(process.env.SMOKE_USER_DATA, savedImages[0])), fivePng);
         win.setSize(1401, 901); await new Promise(r => setTimeout(r, 100)); win.setSize(1400, 900); await new Promise(r => setTimeout(r, 200));
-        fs.writeFileSync(path.join(outputDir, 'rift-5ch.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'rift-5ch.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         assert.equal(await run("document.querySelector('.topbar').getBoundingClientRect().height <= 64"), true);
         win.setSize(390, 844); await new Promise(r => setTimeout(r, 200));
         assert.equal(await run('document.documentElement.scrollWidth <= window.innerWidth'), true);
-        fs.writeFileSync(path.join(outputDir, 'rift-5ch-mobile.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'rift-5ch-mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         win.setSize(1400, 900); await new Promise(r => setTimeout(r, 200));
         await run(`(async () => {
           [...document.querySelectorAll('.panel-header button')].find(b => b.textContent === 'Thread').click();
@@ -365,11 +378,11 @@ app.whenReady().then(() => {
           await waitFor(() => document.querySelector('.saved-thread'));
         })()`);
         win.setSize(1401, 901); await new Promise(r => setTimeout(r, 100)); win.setSize(1400, 900); await new Promise(r => setTimeout(r, 200));
-        fs.writeFileSync(path.join(outputDir, 'rift-library.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'rift-library.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         win.setSize(390, 844); await new Promise(r => setTimeout(r, 200));
         assert.equal(await run('document.documentElement.scrollWidth <= window.innerWidth'), true);
         await assertTabSizes();
-        fs.writeFileSync(path.join(outputDir, 'rift-library-mobile.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'rift-library-mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         win.setSize(1400, 900);
         await run(`(async () => {
           document.querySelectorAll('.library-nav-item')[1].click();
@@ -433,10 +446,10 @@ app.whenReady().then(() => {
         assert.ok((await run("window.electron.openExternal('file:///C:/private')")).error);
         assert.equal(externalPrompts, 2);
         win.setSize(1401, 901); await new Promise(r => setTimeout(r, 100)); win.setSize(1400, 900); await new Promise(r => setTimeout(r, 200));
-        fs.writeFileSync(path.join(outputDir, 'rift-saved-thread.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'rift-saved-thread.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         win.setSize(390, 844); await new Promise(r => setTimeout(r, 150));
         assert.equal(await run('document.documentElement.scrollWidth <= window.innerWidth'), true);
-        fs.writeFileSync(path.join(outputDir, 'rift-saved-thread-mobile.png'), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(outputDir, 'rift-saved-thread-mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         win.setSize(1400, 900);
         await new Promise(resolve => { win.webContents.once('did-finish-load', resolve); win.reload(); });
         await run(`(async () => {
@@ -528,7 +541,7 @@ app.whenReady().then(() => {
           if (library.version !== 3 || library.historyEnabled !== false || library.sites['4chan'].last.thread !== '100') throw new Error('Library migration shape');
           if (!library.sites['4chan'].threads.includes('g/100') || library.sites['4chan'].reads['g/100'].post !== 100) throw new Error('Legacy library entries lost');
           if (document.querySelectorAll('.reader-tab').length !== 1 || !document.querySelector('.post-card .meta').textContent.includes('既読')) throw new Error('Legacy tab/reading state lost');
-          if (!document.querySelector('[data-source="v2ex"]') || document.querySelector('[data-source="ptt"]')) throw new Error('Incorrect site exposure');
+          if (!document.querySelector('[data-source="v2ex"]') || !document.querySelector('[data-source="ptt"]')) throw new Error('Incorrect site exposure');
           document.querySelectorAll('.library-nav-item')[2].click();
           await waitFor(() => [...document.querySelectorAll('.saved-thread-open')].some(button => button.textContent.includes('Legacy offline fixture')));
         })()`);
@@ -571,8 +584,8 @@ app.whenReady().then(() => {
           await waitFor(() => document.querySelector('.connection-message')?.textContent.includes('接続を確認しました'));
         })()`);
         await new Promise(r => setTimeout(r, 250));
-        await win.webContents.capturePage();
-        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-settings.png'), (await win.webContents.capturePage()).toPNG());
+        await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-settings.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         const encryptedFile = path.join(process.env.SMOKE_USER_DATA, 'v2ex-token.bin');
         const connectionStatus = await run('window.electron.v2exSettings({ kind: "status" })');
         if (connectionStatus.persistent) {
@@ -598,8 +611,8 @@ app.whenReady().then(() => {
           await waitFor(() => document.body.textContent.includes('本文を保存しました'));
         })()`);
         await new Promise(r => setTimeout(r, 250));
-        await win.webContents.capturePage();
-        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-desktop.png'), (await win.webContents.capturePage()).toPNG());
+        await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-desktop.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         await run(`(async () => {
           document.querySelector('.post-body .internal-thread-link').click();
           await waitFor(() => document.querySelector('.thread-heading')?.textContent.includes('Next V2EX fixture'));
@@ -628,9 +641,69 @@ app.whenReady().then(() => {
           if (box.left < 0 || box.right > innerWidth || box.height > innerHeight) throw new Error('Settings overflow on mobile');
         })()`);
         await new Promise(r => setTimeout(r, 250));
-        await win.webContents.capturePage();
-        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-mobile.png'), (await win.webContents.capturePage()).toPNG());
+        await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         console.log('PASS: V2EX settings/masked token/OS encryption, API connection, nodes/topics/paging, favorites/tabs, plain Chinese text, internal links, offline save and credential deletion');
+        win.setSize(1400, 900);
+        await run(`(async () => {
+          clickText('閉じる');
+          document.querySelector('[data-source="ptt"]').click();
+          await waitFor(() => [...document.querySelectorAll('.board-item')].some(b => b.textContent.includes('/Soft_Job/')));
+          [...document.querySelectorAll('.board-item')].find(b => b.textContent.includes('/Soft_Job/')).click();
+          await waitFor(() => document.querySelector('.thread-card')?.textContent.includes('PTT fixture'));
+          document.querySelector('.favorite-board').click();
+          document.querySelector('.thread-card button').click();
+          document.querySelector('.thread-card').click();
+          await waitFor(() => document.querySelectorAll('.ptt-reaction').length === 3);
+          if ([...document.querySelectorAll('.ptt-reaction')].map(e => e.textContent).join('') !== '推噓→') throw new Error('PTT reactions');
+          if (!document.querySelector('.post-body').textContent.includes('【署名】') || !document.querySelector('.post-body').textContent.includes('【出典】')) throw new Error('PTT body metadata');
+          clickText('次のページを読み込む');
+          await waitFor(() => document.querySelectorAll('.thread-card').length === 2);
+          const tabs = document.querySelectorAll('.reader-tab').length;
+          document.querySelector('.post-body .internal-thread-link').click();
+          await new Promise(r => setTimeout(r, 100));
+          if (document.querySelectorAll('.reader-tab').length !== tabs) throw new Error('PTT duplicate tab');
+          clickText('本文を保存');
+          await waitFor(() => document.body.textContent.includes('本文を保存しました'));
+        })()`);
+        await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); await new Promise(r => setTimeout(r, 500));
+        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/ptt-desktop.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+        await run(`(async () => {
+          const input = document.querySelector('[aria-label="PTTの板名またはURL"]');
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'https://www.ptt.cc/bbs/Beauty/${pttFixture.id}.html');
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise(r => setTimeout(r, 50)); document.querySelector('.url-bar').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          await waitFor(() => document.querySelectorAll('.ptt-age-notice').length === 2);
+          if (document.querySelector('.post-card') || document.querySelector('.thread-card') || document.body.textContent.includes('Restricted fixture')) throw new Error('Age gate leaked content');
+          const before = await window.electron.pttConsent({ kind: 'status' }); if (before.accepted) throw new Error('Implicit consent');
+          clickText('年齢確認を開く');
+          await waitFor(() => document.body.textContent.includes('同意していません'));
+          if (document.querySelector('.post-card')) throw new Error('Cancelled consent exposed posts');
+        })()`);
+        assert.equal(pttPrompts, 1); assert.ok(pttCookies.every(c => c === undefined));
+        allowPtt = true;
+        await run(`(async () => {
+          clickText('年齢確認を開く');
+          await waitFor(() => document.querySelectorAll('.ptt-reaction').length === 3 && document.querySelector('.thread-card'));
+          if (!(await window.electron.pttConsent({ kind: 'status' })).accepted) throw new Error('Native confirmation did not apply');
+          clickText('PTT年齢確認を解除');
+          await waitFor(() => document.querySelectorAll('.ptt-age-notice').length === 2);
+          if (document.querySelector('.post-card') || document.querySelector('.thread-card')) throw new Error('Revoked consent left live body');
+          if (JSON.stringify(localStorage).includes('over18=1') || document.cookie.includes('over18')) throw new Error('Consent persisted in renderer');
+        })()`);
+        assert.equal(pttPrompts, 2); assert.ok(pttCookies.includes('over18=1')); assert.equal(pttCookies.at(-1), undefined);
+        win.setSize(430, 850);
+        await new Promise(r => setTimeout(r, 250)); await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/ptt-age-mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+        await run(`(async () => {
+          document.querySelectorAll('.library-nav-item')[2].click();
+          await waitFor(() => [...document.querySelectorAll('.saved-thread-open')].some(b => b.textContent.includes('PTT fixture')));
+          [...document.querySelectorAll('.saved-thread-open')].find(b => b.textContent.includes('PTT fixture')).click();
+          await waitFor(() => document.querySelector('.offline-thread')?.textContent.includes('噓 中文 bad'));
+          if (!document.querySelector('.offline-thread').textContent.includes('https://www.ptt.cc/bbs/Soft_Job/')) throw new Error('Saved PTT provenance missing');
+          if (JSON.parse(localStorage.getItem('rift.library.v3')).sites.ptt.metadata['Beauty/${pttFixture.id}']) throw new Error('Gated title entered history');
+        })()`);
+        console.log('PASS: PTT popular boards, older pages, Chinese body/reactions, favorites, internal links, offline save, native age confirmation/cancel/revoke and no gated content leak');
         clearTimeout(timeout);
         app.exit(0);
       } catch (error) { console.error(error); app.exit(1); }

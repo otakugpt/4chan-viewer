@@ -3,7 +3,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { rememberBoards, useLibrary, toggleFavorite } from "../lib/library";
 
 import { providers } from "../lib/providers";
-import { requireReadyPage } from "../lib/pages";
+import { requireReadyPage, PageAccessError } from "../lib/pages";
+import { PttAgeNotice } from "./PttAccess";
 
 interface BoardListProps {
   source: BoardSource;
@@ -22,6 +23,7 @@ export const BoardList: React.FC<BoardListProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [reload, setReload] = useState(0);
   const [query, setQuery] = useState("");
+  const [ageRequired, setAgeRequired] = useState(false);
 
   const provider = providers[source];
 
@@ -29,6 +31,7 @@ export const BoardList: React.FC<BoardListProps> = ({
     const controller = new AbortController();
     setLoading(true);
     setError(null);
+    setAgeRequired(false);
     setBoards([]);
 
     provider.boards(controller.signal)
@@ -41,6 +44,7 @@ export const BoardList: React.FC<BoardListProps> = ({
         if (controller.signal.aborted) return;
         console.error("Failed to load boards:", err);
         setError(err.message);
+        setAgeRequired(err instanceof PageAccessError && err.status === "age-confirmation-required");
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -81,7 +85,7 @@ export const BoardList: React.FC<BoardListProps> = ({
           </div>
         )}
 
-        {!loading && error && <div className="error-state" role="alert">{error}<button className="ui-btn" onClick={() => setReload(value => value + 1)}>再試行</button></div>}
+        {!loading && error && <div className="error-state" role="alert">{source === "ptt" && ageRequired ? <PttAgeNotice /> : <>{error}<button className="ui-btn" onClick={() => setReload(value => value + 1)}>再試行</button></>}</div>}
 
         {!loading &&
           !error &&

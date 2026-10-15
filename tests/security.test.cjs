@@ -131,7 +131,10 @@ test('main IPC checks window, document and main frame and serializes translation
   assert.match((await invoke({ ...event, senderFrame: { url: event.senderFrame.url } }, 'hello')).error, /Unauthorized/);
   assert.match((await invoke({ ...event, sender: { id: 999 } }, 'hello')).error, /Unauthorized/);
   const actual = event.senderFrame.url;
-  for (const channel of ['v2ex-request', 'v2ex-settings']) {
+  assert.equal((await handlers['ptt-consent'](event, { kind: 'status' })).accepted, false);
+  assert.equal((await handlers['ptt-consent'](event, { kind: 'set', accepted: true })).accepted, false);
+  assert.equal((await handlers['ptt-consent'](event, { kind: 'confirm', accepted: true })).accepted, false);
+  for (const channel of ['v2ex-request', 'v2ex-settings', 'ptt-request', 'ptt-consent']) {
     for (const untrusted of [{ ...event, senderFrame: null }, { ...event, senderFrame: { url: actual } }, { ...event, sender: { id: 999 } }]) {
       assert.match((await handlers[channel](untrusted, { kind: 'status' })).error, /Unauthorized/);
     }
@@ -166,6 +169,8 @@ test('preload exposes scoped operations and never forwards Electron events', asy
   assert.deepEqual(await api.saveImages([]), ['save-images', []]);
   assert.deepEqual(await api.v2exRequest({ kind: 'check' }), ['v2ex-request', { kind: 'check' }]);
   assert.deepEqual(await api.v2exSettings({ kind: 'status' }), ['v2ex-settings', { kind: 'status' }]);
+  assert.deepEqual(await api.pttRequest({ kind: 'boards' }), ['ptt-request', { kind: 'boards' }]);
+  assert.deepEqual(await api.pttConsent({ kind: 'status' }), ['ptt-consent', { kind: 'status' }]);
   for (const [method, channel] of [['onProgress', 'save-progress']]) {
     let args;
     const remove = api[method]((...values) => { args = values; });

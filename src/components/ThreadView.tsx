@@ -3,6 +3,7 @@ import { useSave } from "./SaveProvider";
 import { MediaViewer, MediaItem } from "./MediaViewer";
 import { RemoteImage } from "./RemoteImage";
 import { UrlText } from "./UrlText";
+import { PttAgeNotice } from "./PttAccess";
 import { saveThread } from "../lib/savedThreads";
 import { ReplyText } from "./ReplyText";
 import { TranslateButton } from "./TranslateButton";
@@ -20,6 +21,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
   const [savingText, setSavingText] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [ageRequired, setAgeRequired] = useState(false);
   const [notice, setNotice] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const refreshLock = useRef(false);
@@ -59,7 +61,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
         markVisit(data); currentPosts.current = data; setPosts(data);
         setNextCursor(provider.capabilities.postPages ? page.nextCursor : null);
       }
-    }).catch(e => { if (!controller.signal.aborted) setError(e.message); })
+    }).catch(e => { if (!controller.signal.aborted) { setError(e.message); setAgeRequired(e instanceof PageAccessError && e.status === "age-confirmation-required"); } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [provider, board, threadId]);
@@ -142,12 +144,12 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
           const data = more ? mergePage(currentPosts.current, page.items, post => post.postId) : page.items;
           const existing = new Set(currentPosts.current.map(post => post.postId));
           setNotice(`新着 ${page.items.filter(p => !existing.has(p.postId)).length} 件${source === "5ch" ? "（更新間隔は最低10秒）" : ""}`);
-          markVisit(data); currentPosts.current = data; setPosts(data); setLoadedIds([threadId]); setError(""); setNoMoreOlder(false); setViewer(null);
+          markVisit(data); currentPosts.current = data; setPosts(data); setLoadedIds([threadId]); setError(""); setAgeRequired(false); setNoMoreOlder(false); setViewer(null);
           setNextCursor(provider.capabilities.postPages ? page.nextCursor : null);
         }
       }
     } catch (e) { if (!signal.aborted) {
-      if (e instanceof PageAccessError) { currentPosts.current = []; setPosts([]); setViewer(null); setNextCursor(null); setError(e.message); }
+      if (e instanceof PageAccessError) { currentPosts.current = []; setPosts([]); setViewer(null); setNextCursor(null); setError(e.message); setAgeRequired(e.status === "age-confirmation-required"); }
       setNotice(e instanceof Error ? e.message : "取得に失敗しました。");
     } }
     finally { refreshLock.current = false; if (!signal.aborted) setRefreshing(false); }
@@ -157,25 +159,25 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
     setSavingText(true); setNotice("");
     try {
       await saveThread({ version: 2, key: "", source, board, thread: threadId, title: (library.metadata[readingKey]?.title || plainText(currentPosts.current[0]?.sub ?? "") || readingKey).slice(0, 300), savedAt: Date.now(),
-        posts: currentPosts.current.map(p => ({ postId: p.postId, order: p.order, no: p.no, name: plainText(p.name ?? ""), date: plainText(p.date ?? ""), id: p.id ?? "", com: plainText(p.com ?? "") })) });
+        posts: currentPosts.current.map(p => ({ postId: p.postId, order: p.order, no: p.no, name: plainText(p.name ?? ""), date: plainText(p.date ?? ""), id: p.id ?? "", com: (p.reaction ? p.reaction + " " : "") + plainText(p.com ?? "") })) });
       setNotice("本文を保存しました。左の「保存済みスレッド」から読めます。");
     } catch (e) { setNotice(e instanceof Error ? e.message : "本文を保存できませんでした。"); }
     finally { setSavingText(false); }
   };
   const save = (media: Media[]) => { if (!remote || consent) void saveMedia(media.map(m => m.target)); };
   if (loading) return <div className="panel-surface pane-flex"><div className="load-state">Loading thread...</div></div>;
-  if (error) return <div className="panel-surface pane-flex"><div className="error-state" role="alert">{error}<button className="ui-btn" disabled={refreshing} onClick={() => refresh()}>再試行</button>{notice && <p>{notice}</p>}</div></div>;
+  if (error) return <div className="panel-surface pane-flex"><div className="error-state" role="alert">{source === "ptt" && ageRequired ? <PttAgeNotice /> : <>{error}<button className="ui-btn" disabled={refreshing} onClick={() => refresh()}>再試行</button>{notice && <p>{notice}</p>}</>}</div></div>;
 
   return <div className="panel-surface pane-flex">
     <div className="panel-header">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="panel-title thread-heading">{plainText(posts[0]?.sub ?? "") || library.metadata[readingKey]?.title || `/${board}/ No.${threadId}`}</h2><p className="meta mt-1 text-[11px] text-slate-400">{source}{source === "5ch" && posts[0]?.archived ? " · 公式過去ログ" : ""} · Posts {posts.length}{source !== "v2ex" && ` / Images ${mediaList.length}`}</p></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="panel-title thread-heading">{plainText(posts[0]?.sub ?? "") || library.metadata[readingKey]?.title || `/${board}/ No.${threadId}`}</h2><p className="meta mt-1 text-[11px] text-slate-400">{source}{source === "5ch" && posts[0]?.archived ? " · 公式過去ログ" : ""} · Posts {posts.length}{(source === "4chan" || source === "5ch") && ` / Images ${mediaList.length}`}</p></div>
         <div className="flex flex-wrap gap-2">
           <button className="ui-btn" aria-pressed={library.threads.includes(readingKey)} onClick={() => toggleFavorite("threads", readingKey, source, plainText(posts[0]?.sub ?? ""))}>{library.threads.includes(readingKey) ? "お気に入り解除" : "お気に入り"}</button>
           <button className={`ui-btn ${viewMode === "thread" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("thread")}>Thread</button>
-          {source !== "v2ex" && <button className={`ui-btn ${viewMode === "gallery" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("gallery")}>Gallery</button>}
+          {(source === "4chan" || source === "5ch") && <button className={`ui-btn ${viewMode === "gallery" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("gallery")}>Gallery</button>}
           <button className="ui-btn" disabled={refreshing} onClick={() => refresh()}>更新</button>
           <button className="ui-btn save-thread-text" disabled={savingText || refreshing} onClick={() => void saveText()}>{savingText ? "本文保存中…" : "本文を保存"}</button>
-          {source !== "v2ex" && <button className="ui-btn ui-btn--primary" disabled={busy || !mediaList.length || (remote && !consent)} onClick={() => save(mediaList)}>{busy ? "保存中…" : "Save all"}</button>}
+          {(source === "4chan" || source === "5ch") && <button className="ui-btn ui-btn--primary" disabled={busy || !mediaList.length || (remote && !consent)} onClick={() => save(mediaList)}>{busy ? "保存中…" : "Save all"}</button>}
         </div>
       </div>
       {provider.capabilities.references && <details className="reader-options"><summary>閲覧設定・非表示設定</summary>
@@ -196,7 +198,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
         const text = plainText(post.com ?? "");
         const media = mediaList.find(m => m.postId === post.postId);
         return <article key={post.postId} data-post={post.no} data-post-id={post.postId} data-order={post.order} className="post-card animate-enter" style={{ animationDelay: `${Math.min(index, 24) * 12}ms` }}>
-          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold">{plainText(post.name || "Anonymous")}</span><span className="meta text-[11px] text-slate-400">{readIds.has(post.postId) ? "既読 · " : ""}No.{post.no}</span></div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold">{post.reaction && <span className="chip ptt-reaction">{post.reaction}</span>} {plainText(post.name || "Anonymous")}</span><span className="meta text-[11px] text-slate-400">{readIds.has(post.postId) ? "既読 · " : ""}{source === "ptt" ? post.order === 1 ? "本文" : `コメント ${post.order - 1}` : `No.${post.no}`}</span></div>
           {post.date && <p className="meta text-xs mt-2">{plainText(post.date)}</p>}
           {post.id && <div className="flex gap-2 mt-2"><button className="ui-btn" onClick={() => setSelectedId(post.id!)}>ID: {post.id}</button><button className="ui-btn" onClick={() => setFilters({ ...library.filters, ids: [...library.filters.ids, post.id!] }, source)}>IDを非表示</button></div>}
           {media && !remote && <div className="mt-3 flex flex-wrap items-start justify-between gap-3">

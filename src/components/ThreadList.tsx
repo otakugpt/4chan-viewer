@@ -4,7 +4,8 @@ import { rememberTitles, useLibrary, toggleFavorite } from "../lib/library";
 import { TranslateButton } from "./TranslateButton";
 
 import { providers } from "../lib/providers";
-import { requireReadyPage, mergePage } from "../lib/pages";
+import { requireReadyPage, mergePage, PageAccessError } from "../lib/pages";
+import { PttAgeNotice } from "./PttAccess";
 
 interface ThreadListProps {
   source: BoardSource;
@@ -31,6 +32,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [ageRequired, setAgeRequired] = useState(false);
 
   const provider = providers[source];
   const [query, setQuery] = useState("");
@@ -43,6 +45,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     const controller = new AbortController();
     setLoading(true);
     setError(null);
+    setAgeRequired(false);
     if (cursor === undefined) { setThreads([]); visitedCursors.current.clear(); }
     setNextCursor(null);
 
@@ -60,6 +63,8 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         if (controller.signal.aborted) return;
         console.error("Failed to load threads:", err);
         setError(err.message);
+        setAgeRequired(err instanceof PageAccessError && err.status === "age-confirmation-required");
+        if (err instanceof PageAccessError) setThreads([]);
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -73,6 +78,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         <div className="flex items-center justify-between">
           <h2 className="panel-title">Threads /{board}/</h2>
           <span className="meta text-xs text-slate-400">{visibleThreads.length}</span>
+          {source === "ptt" && <button className="ui-btn ui-btn--small" aria-pressed={library.boards.includes(board)} onClick={() => toggleFavorite("boards", board, source)}>{library.boards.includes(board) ? "板の登録解除" : "板を登録"}</button>}
         </div>
         <p className="mt-1 text-xs text-slate-400">
           {source === "4chan" ? "catalog の先頭 50 件を表示しています。" : source === "5ch" ? "検索結果の先頭500件を表示。更新間隔は最低30秒です。" : "取得済みのページ内を検索します。"}
@@ -88,7 +94,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           </div>
         )}
 
-        {!loading && error && <div className="error-state">Error: {error}</div>}
+        {!loading && error && <div className="error-state" role="alert">{source === "ptt" && ageRequired ? <PttAgeNotice /> : <>Error: {error}</>}</div>}
 
         {!loading &&
           !error &&
@@ -128,7 +134,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                         (e.target as HTMLImageElement).style.display = "none";
                       }}
                     />
-                  ) : source === "v2ex" ? null : (
+                  ) : source === "v2ex" || source === "ptt" ? null : (
                     <div className="thread-thumb thread-thumb--empty">No image</div>
                   )}
 
@@ -146,7 +152,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
 
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                       <div className="meta text-[11px] text-slate-400">
-                        レス {thread.replies ?? 0}{source === "4chan" ? " / Images " + (thread.images ?? 0) : ""}
+                        {source === "ptt" ? "推・噓・→ は記事内に表示" : `レス ${thread.replies ?? 0}${source === "4chan" ? " / Images " + (thread.images ?? 0) : ""}`}
                       </div>
                     </div>
                     {provider.capabilities.translation && <TranslateButton

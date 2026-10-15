@@ -712,5 +712,8 @@ input[type=checkbox] { accent-color: var(--accent); margin-right: 5px; }
 .connection-dialog .panel-search { margin-top: 6px; }
 .connection-remember { display: flex; align-items: center; gap: 8px; margin: 16px 0; }
 .connection-state, .connection-message { padding: 10px; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.ptt-age-notice { line-height: 1.7; }
+.ptt-age-notice button { margin-top: 10px; }
+.ptt-reaction { margin-right: 6px; font-size: .85rem; color: var(--accent); }
 .external-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 680px) { .library-board-tools .ui-btn, .library-board-link { min-height: 34px; } }

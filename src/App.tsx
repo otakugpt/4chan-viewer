@@ -14,11 +14,16 @@ import { enabledSources, sources } from "./lib/sources";
 import { useLibraries } from "./lib/library";
 import { V2exSettings } from "./components/V2exSettings";
 import { parseV2exUrl } from "../electron/v2ex-url";
+import { parsePttUrl, validPttBoard } from "../electron/ptt-url";
+import { PttAccess } from "./components/PttAccess";
 
 const EmptyPane = ({ title }: { title: string }) => <div className="panel-surface pane-flex empty-pane"><h2>{title}</h2><p className="mt-3">左から板、スレッドを選択してください。</p></div>;
 export const App: React.FC = () => {
   const [connectionSettings, setConnectionSettings] = useState(false);
   const [connectionRevision, setConnectionRevision] = useState(0);
+  const [pttRevision, setPttRevision] = useState(0);
+  const [pttRevoking, setPttRevoking] = useState(false);
+  const siteRevision = (site: BoardSource) => site === "v2ex" ? connectionRevision : site === "ptt" ? pttRevision : 0;
   const [savedDoc, setSavedDoc] = useState<SavedThread | null>(null);
   const [clearing, setClearing] = useState(false);
   useEffect(() => { void refreshSaved(); }, []);
@@ -87,9 +92,9 @@ export const App: React.FC = () => {
     const generation = ++navigation.current;
     setOpening(true); setUrlError("");
     try {
-      const targetSource = parseV2exUrl(raw.trim()) ? "v2ex" : "5ch";
+      const targetSource = parsePttUrl(raw.trim()) ? "ptt" : parseV2exUrl(raw.trim()) ? "v2ex" : "5ch";
       if (!window.electron?.fiveRequest || !window.electron?.v2exRequest) throw new Error("URLからの閲覧は Electron アプリで利用できます。");
-      const result = targetSource === "v2ex" ? await window.electron.v2exRequest({ kind: "resolve", url: raw.trim() }) : await window.electron.fiveRequest({ kind: "resolve", url: raw.trim() });
+      const result = targetSource === "ptt" ? await window.electron.pttRequest({ kind: "resolve", url: raw.trim() }) : targetSource === "v2ex" ? await window.electron.v2exRequest({ kind: "resolve", url: raw.trim() }) : await window.electron.fiveRequest({ kind: "resolve", url: raw.trim() });
       if (generation !== navigation.current) return;
       if ("error" in result) throw new Error(result.error);
       if (!("board" in result)) throw new Error("移動先を確認できませんでした。");
@@ -100,16 +105,22 @@ export const App: React.FC = () => {
   };
   const openUrl = async (e: React.FormEvent) => {
     e.preventDefault();
-    try { await navigateInternal(url); }
+    try { await navigateInternal(browseSource === "ptt" && validPttBoard(url.trim()) ? `https://www.ptt.cc/bbs/${url.trim()}/index.html` : url); }
     catch (error) { setUrlError(error instanceof Error ? error.message : "URLを開けませんでした。"); }
   };
   const renderedNavigation = navigation.current;
-  return <ThreadNavigation.Provider value={navigateInternal}><div className="app-shell">
+  return <PttAccess.Provider value={() => { navigation.current++; setOpening(false); setPttRevision(value => value + 1); }}><ThreadNavigation.Provider value={navigateInternal}><div className="app-shell">
     <header className="topbar panel-surface">
       <h1 className="topbar-title" title="RIFT（仮称）"><img className="app-icon" src="./icons/rift-48.png" width="24" height="24" alt="" aria-hidden="true" />RIFT</h1>
       <div className="topbar-meta">
         <nav aria-label="掲示板サイト" className="flex gap-2">{enabledSources.map(site => <button key={site} data-source={site} className={`ui-btn ${browseSource === site ? "ui-btn--active" : ""}`} aria-pressed={browseSource === site} onClick={() => changeSource(site)}>{sources[site].label}</button>)}</nav>
-        {(browseSource === "5ch" || browseSource === "v2ex") && <form onSubmit={openUrl} className="url-bar"><input value={url} onChange={e => setUrl(e.target.value)} aria-label={browseSource === "v2ex" ? "V2EXのURL" : "5chのURL"} placeholder={browseSource === "v2ex" ? "V2EXのノード・トピックURL" : "5chの板・スレッドURL（旧 .net も対応）"} /><button className="ui-btn" disabled={opening || !url.trim()}>{opening ? "確認中…" : "URLを開く"}</button>{urlError && <span role="alert">{urlError}</span>}</form>}
+        {browseSource !== "4chan" && <form onSubmit={openUrl} className="url-bar"><input value={url} onChange={e => setUrl(e.target.value)} aria-label={browseSource === "ptt" ? "PTTの板名またはURL" : browseSource === "v2ex" ? "V2EXのURL" : "5chのURL"} placeholder={browseSource === "ptt" ? "PTTの板名（Soft_Job等）または記事URL" : browseSource === "v2ex" ? "V2EXのノード・トピックURL" : "5chの板・スレッドURL（旧 .net も対応）"} /><button className="ui-btn" disabled={opening || !url.trim()}>{opening ? "確認中…" : "URLを開く"}</button>{urlError && <span role="alert">{urlError}</span>}</form>}
+        {browseSource === "ptt" && <button className="ui-btn" disabled={pttRevoking} onClick={async () => {
+          setPttRevoking(true);
+          try { const result = await window.electron.pttConsent({ kind: "revoke" }); if (result.error) setTabNotice(result.error); else { navigation.current++; setOpening(false); setPttRevision(n => n + 1); setTabNotice("PTTの年齢確認を解除しました。保存済み本文は別途削除できます。"); } }
+          catch { setTabNotice("PTTの年齢確認を解除できませんでした。"); }
+          finally { setPttRevoking(false); }
+        }}>PTT年齢確認を解除</button>}
         <button className="ui-btn" onClick={() => setConnectionSettings(true)}>V2EX接続設定</button>
         <span className="chip meta">{savedDoc ? `保存 /${savedDoc.board}/` : board ? `/${board}/` : "No board"}</span>
         <span className="chip meta">{savedDoc ? `No.${savedDoc.thread}` : thread ? `No.${thread}` : "No thread"}</span>
@@ -134,10 +145,11 @@ export const App: React.FC = () => {
     {tabNotice && <p className="reader-notice" role="status">{tabNotice}</p>}
     {(storageError || tabStorageError) && <p className="reader-notice" role="alert">{storageError || tabStorageError}</p>}
     {browseSource === "v2ex" && <p className="reader-notice">V2EX 試験対応 / 個人トークンが必要です。原文テキストのみ表示し、画像・翻訳は後続フェーズで対応します。API取得は約6秒間隔です。</p>}
+    {browseSource === "ptt" && <p className="reader-notice">PTT 公開Web版 / 一覧は人気板です。板名の直接指定も可能です。原文とコメントを表示し、画像・翻訳は未対応。通信は約3秒間隔、年齢確認の同意は起動中だけ保持します。</p>}
     <main className="workspace-grid">
-      <section className="workspace-pane"><LibrarySidebar key={browseSource === "v2ex" ? connectionRevision : "other"} source={browseSource} selectedBoard={listBoard} mode={mode} onMode={next => { navigation.current++; setOpening(false); setMode(next); }} onBoard={chooseBoard} /></section>
-      <section className="workspace-pane">{mode === "saved" ? <SavedThreadList onOpen={doc => { if (navigation.current === renderedNavigation) setSavedDoc(doc); }} onDelete={key => { if (!key || savedDoc?.key === key) setSavedDoc(null); }} /> : mode !== "board" ? <LibraryList key={mode} mode={mode} active={source + "/" + board + "/" + thread} onSelect={openTab} /> : listBoard ? <ThreadList key={browseSource + listBoard + (browseSource === "v2ex" ? connectionRevision : "")} source={browseSource} board={listBoard} onSelect={t => select(listBoard, t)} selectedThread={source === browseSource && board === listBoard ? thread : null} /> : <EmptyPane title="Select a Board" />}</section>
-      <section className="workspace-pane">{savedDoc ? <SavedThreadView key={savedDoc.key + savedDoc.savedAt} doc={savedDoc} onClose={() => setSavedDoc(null)} /> : board && thread ? <ThreadView key={source + board + "/" + thread + (source === "v2ex" ? "/" + connectionRevision : "")} source={source} board={board} threadId={thread} /> : <EmptyPane title="Select a Thread" />}</section>
+      <section className="workspace-pane"><LibrarySidebar key={browseSource + siteRevision(browseSource)} source={browseSource} selectedBoard={listBoard} mode={mode} onMode={next => { navigation.current++; setOpening(false); setMode(next); }} onBoard={chooseBoard} /></section>
+      <section className="workspace-pane">{mode === "saved" ? <SavedThreadList onOpen={doc => { if (navigation.current === renderedNavigation) setSavedDoc(doc); }} onDelete={key => { if (!key || savedDoc?.key === key) setSavedDoc(null); }} /> : mode !== "board" ? <LibraryList key={mode} mode={mode} active={source + "/" + board + "/" + thread} onSelect={openTab} /> : listBoard ? <ThreadList key={browseSource + listBoard + siteRevision(browseSource)} source={browseSource} board={listBoard} onSelect={t => select(listBoard, t)} selectedThread={source === browseSource && board === listBoard ? thread : null} /> : <EmptyPane title="Select a Board" />}</section>
+      <section className="workspace-pane">{savedDoc ? <SavedThreadView key={savedDoc.key + savedDoc.savedAt} doc={savedDoc} onClose={() => setSavedDoc(null)} /> : board && thread ? <ThreadView key={source + board + "/" + thread + ("/" + siteRevision(source))} source={source} board={board} threadId={thread} /> : <EmptyPane title="Select a Thread" />}</section>
     </main>
     {status && <footer className="status-bar panel-surface">
       <div className="flex items-center justify-between gap-4"><span className="meta">Save Status</span><span>{Math.round(progress)}%</span></div>
@@ -146,5 +158,5 @@ export const App: React.FC = () => {
       <div className="progress-track mt-3"><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
     </footer>}
     {connectionSettings && <V2exSettings onClose={() => setConnectionSettings(false)} onChanged={() => { navigation.current++; setOpening(false); setConnectionRevision(value => value + 1); }} />}
-  </div></ThreadNavigation.Provider>;
+  </div></ThreadNavigation.Provider></PttAccess.Provider>;
 };
