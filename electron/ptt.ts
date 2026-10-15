@@ -11,6 +11,7 @@ export function createPttService(options: { request?: typeof getBytes; spacing?:
   const check = (v: number) => { if (v !== revision) throw new PttUnsupported("PTTの年齢確認状態が変更されました。再読み込みしてください。"); };
   async function read(path: string, generation: number) {
     check(generation);
+    if (now() < cooldown) throw new PttUnsupported("PTTの利用制限中です。時間をおいて再試行してください。");
     const key = generation + ":" + path, hit = cache.get(key);
     if (hit && hit.until > now()) return hit;
     if (pending.has(key)) return pending.get(key)!;
@@ -28,13 +29,15 @@ export function createPttService(options: { request?: typeof getBytes; spacing?:
         }
         throw new PttUnsupported("PTTに接続できません。通信環境・サイトの制限を確認してください。転送先は自動取得しません。");
       }
-      check(generation);
-      if (r.status === 403 || r.status === 429) {
-        const seconds = Number(r.headers["retry-after"]), date = Date.parse(String(r.headers["retry-after"] ?? ""));
-        cooldown = now() + Math.max(60_000, Number.isFinite(seconds) ? Math.min(seconds * 1000, 86_400_000) : Number.isFinite(date) ? Math.min(date - now(), 86_400_000) : 0);
-        cache.clear();
+      // Site-wide restrictions survive consent changes, including an in-flight revocation.
+      if (r.status === 403 || r.status === 429 || r.status === 503) {
+        const header = r.headers["retry-after"], time = now();
+        const retry = typeof header === "string" && /^\d+$/.test(header) ? Number(header) * 1000 : typeof header === "string" ? Date.parse(header) - time : 0;
+        cooldown = Math.max(cooldown, time + Math.max(60_000, Number.isNaN(retry) ? 0 : retry));
+        cache.clear(); cursors.clear();
         throw new PttUnsupported("PTTでアクセスが制限されています。連続再試行せず時間をおいてください。");
       }
+      check(generation);
       if (r.status === 404 || r.status === 410) throw new PttUnsupported("PTTの板・記事が見つかりません。削除済み記事を外部ミラーから取得することはありません。");
       if (r.status !== 200) throw new PttUnsupported("PTTで通信エラーが発生しました。");
       const mime = String(r.headers["content-type"] ?? "");

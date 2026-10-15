@@ -5,6 +5,7 @@ import { rememberBoards, useLibrary, toggleFavorite } from "../lib/library";
 import { providers } from "../lib/providers";
 import { requireReadyPage, PageAccessError } from "../lib/pages";
 import { PttAgeNotice } from "./PttAccess";
+import { validPttBoard } from "../../electron/ptt-url";
 
 interface BoardListProps {
   source: BoardSource;
@@ -65,16 +66,26 @@ export const BoardList: React.FC<BoardListProps> = ({
     <div className="panel-surface pane-flex">
       <div className="panel-header">
         <div className="flex items-center justify-between">
-          <h2 className="panel-title">Boards</h2>
+          <h2 className="panel-title">{source === "ptt" ? "人気の板" : "Boards"}</h2>
           <span className="meta text-xs text-slate-400">{boards.length}</span>
         </div>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter boards..."
+          placeholder={source === "ptt" ? "人気板を絞り込み / 板名で開く" : "Filter boards..."}
           aria-label="板を検索"
           className="panel-search"
         />
+        {source === "ptt" && <>
+          {validPttBoard(query.trim()) && <button type="button" className="ui-btn ptt-direct-board" onClick={() => onSelect(query.trim())}>板名「{query.trim()}」を直接開く</button>}
+          <details className="ptt-guide">
+            <summary>PTTの読み方・板の探し方</summary>
+            <p>一覧は人気板だけです。載っていない板も、正式な板名を上の欄に入力して開けます（大文字・小文字を区別）。上部の入力欄では記事URLも使えます。</p>
+            <button type="button" className="ui-btn" onClick={() => onSelect("Soft_Job")}>Soft_Job を開く</button>
+            <p>「推／噓／→」はコメントの反応種別です。記事一覧の「次のページを読み込む」で古い記事へ進めます。気に入った板は「登録」で保存できます。</p>
+            <p>公開Web版のみを読みます。年齢確認が必要な板は同意するまで表示しません。画像取得・翻訳も確認後だけ実行します。</p>
+          </details>
+        </>}
       </div>
 
       <div className="list-scroll smooth-scroll">
@@ -109,7 +120,7 @@ export const BoardList: React.FC<BoardListProps> = ({
           ))}
 
         {!loading && !error && filteredBoards.length === 0 && (
-          <div className="empty-state">No matching boards.</div>
+          <div className="empty-state">{source === "ptt" ? "人気一覧に一致する板はありません。正式な板名が分かれば直接開けます。" : "No matching boards."}</div>
         )}
         {!loading && !error && boards.length === 0 && (
           <div className="empty-state">No boards available.</div>

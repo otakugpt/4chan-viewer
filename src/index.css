@@ -152,6 +152,12 @@ body {
   box-shadow: 0 0 0 3px rgba(95, 180, 255, 0.18);
 }
 
+.ui-btn.ptt-direct-board { width: 100%; margin-top: 6px; overflow-wrap: anywhere; white-space: normal; line-height: 1.5; }
+.ptt-guide { margin-top: 8px; font-size: .75rem; color: var(--text-soft); line-height: 1.6; }
+.ptt-guide summary { cursor: pointer; }
+.ptt-guide summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ptt-guide p { margin: 8px 0; }
+
 .list-scroll {
   flex: 1;
   min-height: 0;

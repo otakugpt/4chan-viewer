@@ -82,7 +82,7 @@ test('public check opt-in is mandatory, output omits article content and never g
     seen.push(r);
     if (r.kind === 'boards') return { boards: [node] };
     if (r.board === 'Beauty') return { status: 'age-confirmation-required' };
-    if (r.kind === 'threads') return { threads: [{ threadId: 'M.123.A.ABC', sub: 'Private title fixture' }], nextCursor: r.cursor ? null : 'opaque' };
+    if (r.kind === 'threads') return { threads: [{ threadId: r.cursor ? 'M.122.A.ABC' : 'M.123.A.ABC', sub: 'Private title fixture' }], nextCursor: r.cursor ? null : 'opaque' };
     return { posts: [{ com: 'Private article fixture', media: [] }] };
   } });
   assert.equal(report.checks.length, 7); assert.ok(report.checks.every(c => c.status === 'passed'));
@@ -94,4 +94,46 @@ test('public checks stop requesting a site after failure and never echo upstream
     v2ex: async () => ({ error: fixtureToken }), ptt: async () => { calls++; return { error: fixtureToken }; } });
   assert.equal(calls, 1); assert.equal(report.checks.filter(c => c.status === 'failed').length, 2);
   assert.ok(!JSON.stringify(report).includes(fixtureToken));
+});
+
+test('PTT-only checks never call V2EX and stop after any thrown PTT failure', async () => {
+  for (let failAt = 1; failAt <= 5; failAt++) {
+    let calls = 0, v2exCalls = 0;
+    const report = await runPublicChecks({
+      v2ex: async () => { v2exCalls++; throw new Error(); }, anonymousAuth: async () => { v2exCalls++; throw new Error(); },
+      ptt: async r => {
+        if (++calls === failAt) throw new Error(fixtureToken);
+        if (r.kind === 'boards') return { boards: [node] };
+        if (r.board === 'Beauty') return { status: 'age-confirmation-required' };
+        if (r.kind === 'threads') return { threads: [{ threadId: r.cursor ? 'older' : 'first' }], nextCursor: r.cursor ? null : 'cursor' };
+        return { posts: [{ com: 'Private article fixture' }] };
+      },
+    }, { pttOnly: true });
+    assert.equal(calls, failAt); assert.equal(v2exCalls, 0); assert.equal(report.checks.length, 5);
+    assert.equal(report.checks[failAt - 1].status, 'failed');
+    assert.ok(report.checks.slice(failAt).every(c => c.status === 'not-tested'));
+    assert.ok(!JSON.stringify(report).includes(fixtureToken)); assert.ok(!JSON.stringify(report).includes('Private'));
+  }
+});
+
+test('PTT checks do not claim empty or repeated older pages are verified', async () => {
+  for (const repeated of [true, false]) {
+    let calls = 0;
+    const report = await runPublicChecks({ ptt: async r => {
+      calls++;
+      if (r.kind === 'boards') return { boards: [node] };
+      if (r.board === 'Beauty') return { status: 'age-confirmation-required' };
+      if (r.kind === 'posts') return { posts: [{}] };
+      return { threads: r.cursor && !repeated ? [] : [{ threadId: 'same' }], nextCursor: r.cursor ? null : 'cursor' };
+    } }, { pttOnly: true });
+    assert.equal(report.checks[2].status, repeated ? 'failed' : 'not-tested');
+    assert.equal(calls, repeated ? 3 : 5);
+  }
+});
+
+test('PTT live CLI rejects missing opt-in, duplicate flags and unknown arguments', () => {
+  for (const args of [['--ptt'], ['--allow-network', '--ptt', '--ptt'], ['--allow-network', '--unknown']]) {
+    const run = require('node:child_process').spawnSync(process.execPath, ['scripts/check-public.cjs', ...args], { encoding: 'utf8', windowsHide: true });
+    assert.equal(run.status, 2); assert.match(run.stderr, /allow-network/);
+  }
 });

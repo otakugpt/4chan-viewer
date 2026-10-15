@@ -761,8 +761,27 @@ app.whenReady().then(() => {
           clickText('閉じる');
           document.querySelector('[data-source="ptt"]').click();
           await waitFor(() => [...document.querySelectorAll('.board-item')].some(b => b.textContent.includes('/Soft_Job/')));
-          [...document.querySelectorAll('.board-item')].find(b => b.textContent.includes('/Soft_Job/')).click();
+          const guide = document.querySelector('.ptt-guide');
+          if (!guide || guide.open) throw new Error('PTT guide must start collapsed');
+          guide.querySelector('summary').click();
+          if (!guide.textContent.includes('公開Web版のみ')) throw new Error('PTT guide safety information');
+          const search = document.querySelector('[aria-label="板を検索"]');
+          const searchFor = async value => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(search, value);
+            search.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 50));
+          };
+          for (const invalid of ['../private', 'https://evil.test', 'constructor']) {
+            await searchFor(invalid);
+            if (document.querySelector('.ptt-direct-board')) throw new Error('Invalid direct PTT board offered');
+          }
+          await searchFor('Not_In_Popular');
+          if (document.querySelector('.board-item') || !document.querySelector('.ptt-direct-board')) throw new Error('PTT unlisted board entry missing');
+          await searchFor(' Soft_Job ');
+          document.querySelector('.ptt-direct-board').click();
           await waitFor(() => document.querySelector('.thread-card')?.textContent.includes('PTT fixture'));
+          await searchFor('');
+          guide.querySelector('summary').click();
           document.querySelector('.favorite-board').click();
           document.querySelector('.thread-card button').click();
           document.querySelector('.thread-card').click();
@@ -808,6 +827,21 @@ app.whenReady().then(() => {
         win.setSize(430, 850);
         await new Promise(r => setTimeout(r, 250)); await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
         fs.writeFileSync(path.join(__dirname, '../.test-artifacts/ptt-age-mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+        const readsBeforeGuide = networkReads;
+        await run(`(async () => {
+          const guide = document.querySelector('.ptt-guide');
+          guide.querySelector('summary').click();
+          const search = document.querySelector('[aria-label="板を検索"]');
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(search, 'A'.repeat(64));
+          search.dispatchEvent(new Event('input', { bubbles: true }));
+          await waitFor(() => document.querySelector('.ptt-direct-board'));
+          const direct = document.querySelector('.ptt-direct-board');
+          direct.scrollIntoView({ block: 'center' });
+          if (direct.scrollWidth > direct.clientWidth + 1 || document.documentElement.scrollWidth > innerWidth) throw new Error('PTT guide/direct board overflow on mobile');
+        })()`);
+        await new Promise(r => setTimeout(r, 250)); await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+        fs.writeFileSync(path.join(__dirname, '../.test-artifacts/ptt-guide-mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+        assert.equal(networkReads, readsBeforeGuide, 'Guide and board-name typing must not fetch');
         await run(`(async () => {
           document.querySelectorAll('.library-nav-item')[2].click();
           await waitFor(() => [...document.querySelectorAll('.saved-thread-open')].some(b => b.textContent.includes('PTT fixture')));
@@ -816,7 +850,7 @@ app.whenReady().then(() => {
           if (!document.querySelector('.offline-thread').textContent.includes('https://www.ptt.cc/bbs/Soft_Job/')) throw new Error('Saved PTT provenance missing');
           if (JSON.parse(localStorage.getItem('rift.library.v3')).sites.ptt.metadata['Beauty/${pttFixture.id}']) throw new Error('Gated title entered history');
         })()`);
-        console.log('PASS: PTT popular boards, older pages, Chinese body/reactions, favorites, internal links, offline save, native age confirmation/cancel/revoke and no gated content leak');
+        console.log('PASS: PTT compact guide, validated direct board entry, popular boards, older pages, Chinese body/reactions, favorites, internal links, offline save, native age confirmation/cancel/revoke and no gated content leak');
         clearTimeout(timeout);
         app.exit(0);
       } catch (error) { console.error(error); app.exit(1); }

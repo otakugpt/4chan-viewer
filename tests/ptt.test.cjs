@@ -108,3 +108,51 @@ test('PTT pagination tokens expire and are invalidated by consent changes', asyn
   assert.ok((await s.request({ kind: 'threads', board: 'Soft_Job', cursor: second.nextCursor })).error);
   assert.equal(calls, 2);
 });
+
+test('PTT never shortens Retry-After, including HTTP dates and oversized seconds', async () => {
+  const start = Date.parse('2026-10-15T00:00:00Z');
+  for (const status of [403, 429, 503]) {
+    for (const header of ['172800', new Date(start + 172800000).toUTCString(), '9'.repeat(320)]) {
+      let time = start, calls = 0;
+      const s = createPttService({ spacing: 0, now: () => time, request: async () => {
+        calls++; return calls === 1 ? f.response('', status, { 'retry-after': header }) : f.response(f.boards);
+      } });
+      assert.ok((await s.request({ kind: 'boards' })).error);
+      time += 86400001;
+      s.setConsent(false);
+      assert.ok((await s.request({ kind: 'boards' })).error);
+      assert.equal(calls, 1);
+      time = start + 172800001;
+      const result = await s.request({ kind: 'boards' });
+      if (header.length > 100) { assert.ok(result.error); assert.equal(calls, 1); }
+      else { assert.equal(result.boards.length, 2); assert.equal(calls, 2); }
+    }
+  }
+});
+
+test('PTT restrictions apply to queued reads and survive in-flight consent changes', async () => {
+  let release, calls = 0;
+  const s = createPttService({ spacing: 0, request: async () => {
+    calls++;
+    return new Promise(resolve => { release = () => resolve(f.response('', 429, { 'retry-after': '120' })); });
+  } });
+  const first = s.request({ kind: 'boards' });
+  await new Promise(resolve => setImmediate(resolve));
+  s.setConsent(false);
+  const queued = s.request({ kind: 'threads', board: 'Soft_Job' });
+  release();
+  assert.ok((await first).error); assert.ok((await queued).error);
+  assert.ok((await s.request({ kind: 'boards' })).error); assert.equal(calls, 1);
+});
+
+test('PTT malformed or missing Retry-After still waits at least one minute', async () => {
+  for (const header of [undefined, '', 'invalid', '0']) {
+    let time = 1000, calls = 0;
+    const s = createPttService({ spacing: 0, now: () => time, request: async () => {
+      calls++; return calls === 1 ? f.response('', 429, { 'retry-after': header }) : f.response(f.boards);
+    } });
+    await s.request({ kind: 'boards' });
+    time += 59999; assert.ok((await s.request({ kind: 'boards' })).error); assert.equal(calls, 1);
+    time++; assert.ok((await s.request({ kind: 'boards' })).boards); assert.equal(calls, 2);
+  }
+});
