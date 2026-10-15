@@ -91,24 +91,24 @@ export const providers: Record<BoardSource, Provider> = {
     thumbnail: () => null,
   },
   v2ex: {
-    source: "v2ex", capabilities: { archive: false, translation: false, remoteImages: false, references: false, threadPages: true, postPages: true, ageConfirmation: false },
+    source: "v2ex", capabilities: { archive: false, translation: true, remoteImages: true, references: false, threadPages: true, postPages: true, ageConfirmation: false },
     boards: async signal => { const r = await v2ex({ kind: "boards" }, signal); if ("boards" in r) return readyPage(r.boards); throw new Error("Invalid response"); },
     threads: async (board, signal, cursor) => {
       if (!validBoard("v2ex", board)) throw new Error("Invalid destination");
       const r = await v2ex({ kind: "threads", board, cursor }, signal);
-      if ("threads" in r) return readyPage(r.threads, r.nextCursor);
+      if ("threads" in r) return { ...readyPage(r.threads, r.nextCursor), publicOnly: r.publicOnly };
       throw new Error("Invalid response");
     },
     posts: async (board, thread, signal, cursor) => {
       if (!validBoard("v2ex", board) || !normalizeThreadId("v2ex", thread)) throw new Error("Invalid destination");
       const r = await v2ex({ kind: "posts", board, thread, cursor }, signal);
-      if ("posts" in r) return readyPage(r.posts, r.nextCursor);
+      if ("posts" in r) return { ...readyPage(r.posts, r.nextCursor), publicOnly: r.publicOnly };
       throw new Error("Invalid response");
     },
     thumbnail: () => null,
   },
   ptt: {
-    source: "ptt", capabilities: { archive: false, translation: false, remoteImages: false, references: false, threadPages: true, postPages: false, ageConfirmation: true },
+    source: "ptt", capabilities: { archive: false, translation: true, remoteImages: true, references: false, threadPages: true, postPages: false, ageConfirmation: true },
     boards: async signal => { const r = await ptt({ kind: "boards" }, signal); if ("boards" in r) return readyPage(r.boards); throw new Error("Invalid response"); },
     threads: async (board, signal, cursor) => {
       if (!validBoard("ptt", board)) throw new Error("Invalid destination");

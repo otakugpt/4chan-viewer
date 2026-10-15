@@ -1,6 +1,7 @@
 import { parse } from "parse5";
 import { createHash } from "node:crypto";
 import { parsePttUrl } from "./ptt-url";
+import { extractImages, normalizeFiveImage } from "./five-media";
 
 interface Node { nodeName: string; value?: string; childNodes?: Node[]; attrs?: { name: string; value: string }[] }
 const attr = (n: Node, key: string) => n.attrs?.find(a => a.name === key)?.value ?? "";
@@ -25,6 +26,21 @@ function text(n: Node): string {
 const find = (n: Node, name: string) => nodes(n).find(x => has(x, name));
 const field = (n: Node, name: string) => { const child = find(n, name); return child ? text(child).trim() : ""; };
 const escaped = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function images(roots: Node[]): string[] {
+  const urls = new Set<string>();
+  const visit = (n: Node) => {
+    if (urls.size >= 100) return;
+    if (n.nodeName === "img" || n.nodeName === "a") {
+      const url = normalizeFiveImage(attr(n, n.nodeName === "img" ? "src" : "href"));
+      if (url) urls.add(url);
+    }
+    if (excluded.has(n.nodeName)) return;
+    if (n.nodeName === "#text") for (const url of extractImages(n.value ?? "")) { if (urls.size >= 100) break; urls.add(url); }
+    for (const child of n.childNodes ?? []) visit(child);
+  };
+  for (const root of roots) visit(root);
+  return [...urls];
+}
 const link = (n: Node) => {
   const href = attr(n, "href");
   try { return parsePttUrl(new URL(href, "https://www.ptt.cc").href); } catch { return null; }
@@ -90,17 +106,17 @@ export function pttPosts(html: string, board: string, thread: string, accepted: 
   const root = roots[0], meta: Record<string, string> = {};
   for (const n of root.childNodes ?? []) if (has(n, "article-metaline") || has(n, "article-metaline-right")) meta[field(n, "article-meta-tag")] = field(n, "article-meta-value");
   if (!meta["作者"] || !meta["標題"] || meta["看板"] !== board || !meta["時間"]) throw new PttUnsupported("PTTの記事情報を確認できません。旧形式・構造変更の可能性があります。");
-  const body: string[] = [], notes: string[] = [];
+  const body: string[] = [], notes: string[] = [], bodyNodes: Node[] = [];
   for (const n of root.childNodes ?? []) {
     if (has(n, "push") || has(n, "article-metaline") || has(n, "article-metaline-right")) continue;
     const value = text(n);
     if (has(n, "f2") && /^\s*※\s*(發信站|文章網址|編輯|轉錄者)/.test(value)) notes.push(value.trim());
-    else body.push(value);
+    else { body.push(value); bodyNodes.push(n); }
   }
   const parts = body.join("").trim().split(/\n--\s*\n/);
   const content = [parts.shift() ?? "", parts.length ? "【署名】\n" + parts.join("\n--\n") : "", notes.length ? "【発信・編集情報】\n" + notes.join("\n") : "", `【出典】https://www.ptt.cc/bbs/${board}/${thread}.html\n取得日時: ${fetchedAt}`].filter(Boolean).join("\n\n");
   if (content.length > 200_000) throw new PttUnsupported("PTTの本文が大きすぎます。");
-  const posts: PostInfo[] = [{ postId: "article:" + thread, order: 1, no: 1, name: escaped(meta["作者"]), date: escaped(meta["時間"]), sub: escaped(meta["標題"]), com: escaped(content) }];
+  const posts: PostInfo[] = [{ postId: "article:" + thread, order: 1, no: 1, name: escaped(meta["作者"]), date: escaped(meta["時間"]), sub: escaped(meta["標題"]), com: escaped(content), media: images(bodyNodes) }];
   const pushes = nodes(root).filter(n => has(n, "push"));
   if (pushes.length > 9999) throw new PttUnsupported("PTTのコメントが上限を超えています。");
   const occurrences = new Map<string, number>();
@@ -110,7 +126,8 @@ export function pttPosts(html: string, board: string, thread: string, accepted: 
     if (!["推", "噓", "→"].includes(reaction) || !name || !date || value.length > 20_000) throw new PttUnsupported("PTTのコメント形式を確認できません。");
     const hash = createHash("sha256").update(JSON.stringify([thread, reaction, name, date, value])).digest("hex").slice(0, 32);
     const occurrence = (occurrences.get(hash) ?? 0) + 1; occurrences.set(hash, occurrence);
-    posts.push({ postId: `comment:${hash}:${occurrence}`, order: posts.length + 1, no: posts.length + 1, name: escaped(name), date: escaped(date), reaction: reaction as "推" | "噓" | "→", com: escaped(value) });
+    const comment = find(push, "push-content");
+    posts.push({ postId: `comment:${hash}:${occurrence}`, order: posts.length + 1, no: posts.length + 1, name: escaped(name), date: escaped(date), reaction: reaction as "推" | "噓" | "→", com: escaped(value), media: comment ? images([comment]) : [] });
   }
   return posts;
 }

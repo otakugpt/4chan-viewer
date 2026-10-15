@@ -21,10 +21,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm test
-      - run: npm run lint
-      - run: npm run build
-      - run: node tests/electron-smoke.cjs
+      # No live site reads, credentials or stored user data in CI.
+      - run: npm run verify
       - run: npm audit --audit-level=moderate
   secrets:
     runs-on: ubuntu-latest

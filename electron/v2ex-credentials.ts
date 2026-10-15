@@ -13,6 +13,16 @@ const validToken = (value: unknown): value is string => typeof value === "string
 // Only this main-process vault handles plaintext credentials. Status never returns them.
 export function createV2exVault(file: string, crypto: CryptoStorage) {
   let token = "", persistent = false, revision = 0, error: string | undefined;
+  let mode: V2exMode = "public";
+  const modeFile = file + ".mode.json";
+  try {
+    if (fs.existsSync(modeFile)) {
+      if (fs.statSync(modeFile).size > 128) throw new Error();
+      const stored: unknown = JSON.parse(fs.readFileSync(modeFile, "utf8"));
+      if (stored !== "public" && stored !== "authenticated") throw new Error();
+      mode = stored;
+    }
+  } catch { error = "閲覧モードを復元できません。安全のため公開モードで開始しました。"; }
   const canPersist = () => {
     try { return crypto.isEncryptionAvailable() && crypto.getSelectedStorageBackend?.() !== "basic_text"; }
     catch { return false; }
@@ -25,12 +35,21 @@ export function createV2exVault(file: string, crypto: CryptoStorage) {
       token = value; persistent = true;
     }
   } catch { error = "保存したトークンを復号できません。接続設定で再設定または削除してください。"; }
-  const status = (): V2exCredentialStatus => ({ configured: !!token, persistent, canPersist: canPersist(), ...(error ? { error } : {}) });
+  const status = (): V2exCredentialStatus => ({ configured: !!token, persistent, canPersist: canPersist(), mode, ...(error ? { error } : {}) });
   function settings(input: unknown): V2exCredentialStatus {
     try {
       if (!input || typeof input !== "object") throw new Error();
       const request = input as V2exSettingsRequest;
       if (request.kind === "status") return status();
+      if (request.kind === "mode") {
+        if (request.mode !== "public" && request.mode !== "authenticated") throw new Error();
+        const temporary = modeFile + "." + randomUUID() + ".tmp";
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        try { fs.writeFileSync(temporary, JSON.stringify(request.mode), { flag: "wx", mode: 0o600 }); fs.renameSync(temporary, modeFile); }
+        finally { try { fs.unlinkSync(temporary); } catch { /* Already renamed, or creation failed. */ } }
+        mode = request.mode; revision++; error = undefined;
+        return status();
+      }
       if (request.kind !== "clear" && request.kind !== "set") throw new Error();
       if (request.kind === "set") {
         if (!validToken(request.token) || typeof request.persist !== "boolean") return { ...status(), error: "トークンの形式を確認してください（空白・改行は使用できません）。" };
@@ -54,5 +73,5 @@ export function createV2exVault(file: string, crypto: CryptoStorage) {
       return status();
     } catch { return { ...status(), error: "接続設定を変更できませんでした。保存先のアクセス権を確認してください。" }; }
   }
-  return { settings, snapshot: () => ({ token, revision }) };
+  return { settings, snapshot: () => ({ token, revision, mode }) };
 }

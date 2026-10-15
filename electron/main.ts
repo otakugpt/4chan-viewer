@@ -59,7 +59,7 @@ ipcMain.handle("v2ex-request", async (event, request: unknown) => {
   catch { return { error: "V2EXの接続を初期化できません。" }; }
 });
 ipcMain.handle("v2ex-settings", (event, request: unknown): V2exCredentialStatus => {
-  const failure = (error: string) => ({ configured: false, persistent: false, canPersist: false, error });
+  const failure = (error: string): V2exCredentialStatus => ({ configured: false, persistent: false, canPersist: false, mode: "public", error });
   if (!trustedSender(event)) return failure("Unauthorized request");
   try { return v2exClient().vault.settings(request); }
   catch { return failure("接続設定を読み取れませんでした。"); }
@@ -187,19 +187,20 @@ app.on("window-all-closed", () => {
 });
 
 let saving = false;
+const remoteImageSource = (source: unknown) => source === "5ch" || source === "v2ex" || source === "ptt";
 ipcMain.handle("save-images", async (event, input: unknown): Promise<SaveResult> => {
   const failure = (error: string): SaveResult => ({ status: "error", total: 0, saved: 0, failedTargets: [], error });
   if (!trustedSender(event)) return failure("Unauthorized request");
   if (saving) return { status: "busy", total: 0, saved: 0, failedTargets: [] };
   if (!Array.isArray(input) || input.length === 0 || input.length > 2000 ||
-      !input.every(item => item && (item.source === "5ch"
+      !input.every(item => item && (remoteImageSource(item.source)
         ? normalizeFiveImage(item.url) && (item.filename === undefined || item.filename === imageFilename(item.url))
         : (item.source === undefined || item.source === "4chan") && normalizeDownloadUrl(item.url) &&
           (item.filename === undefined || (typeof item.filename === "string" && /^\d+\.(jpg|jpeg|png|gif|webm)$/i.test(item.filename)))))) {
     return failure("保存対象が不正です（1〜2000件まで）。");
   }
-  const list: ImageTarget[] = input.map(item => item.source === "5ch"
-    ? { source: "5ch", url: normalizeFiveImage(item.url)!, filename: imageFilename(item.url) }
+  const list: ImageTarget[] = input.map(item => remoteImageSource(item.source)
+    ? { source: item.source, url: normalizeFiveImage(item.url)!, filename: imageFilename(item.url) }
     : { url: item.url, ...(item.filename === undefined ? {} : { filename: item.filename }) });
   const failedTargets: ImageTarget[] = [];
   let saved = 0;
@@ -217,7 +218,7 @@ ipcMain.handle("save-images", async (event, input: unknown): Promise<SaveResult>
         const filePath = await resolveUniqueFilePath(path.join(filePaths[0], filename));
         for (let attempt = 1; attempt <= DOWNLOAD_RETRY_COUNT; attempt++) {
           try {
-            if (item.source === "5ch") await downloadFiveImage(item.url, filePath);
+            if (remoteImageSource(item.source)) await downloadFiveImage(item.url, filePath);
             else await downloadImage(item.url, filePath);
             complete = true; break;
           }

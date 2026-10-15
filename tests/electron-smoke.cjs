@@ -22,13 +22,17 @@ const { app, session } = electron;
 app.setPath('userData', process.env.SMOKE_USER_DATA);
 app.disableHardwareAcceleration();
 require('node:net').Server.prototype.listen = () => { throw new Error('Unexpected HTTP listener'); };
+const translatedTexts = [];
 global.fetch = async (url, options) => {
   assert.equal(url, 'https://api-free.deepl.com/v2/translate');
   assert.equal(options.headers.Authorization, 'DeepL-Auth-Key test-placeholder');
+  assert.equal(options.headers.Cookie, undefined);
+  translatedTexts.push(JSON.parse(options.body).text[0]);
   return Response.json({ translations: [{ text: 'smoke translation' }] });
 };
 let fiveImageReads = 0;
 let networkReads = 0;
+let publicReplyReads = 0;
 let externalPrompts = 0, allowExternal = false;
 let pttPrompts = 0, allowPtt = false;
 const pttCookies = [], pttFixture = require('./helpers/ptt-fixtures.cjs');
@@ -56,17 +60,20 @@ Module._load = function (name, ...args) {
       const gate = board === 'Beauty' ? pttFixture.gate : '';
       if (url.endsWith('/index.html')) return pttFixture.response(gate + pttFixture.listing(board, '12', board === 'Beauty' ? 'Restricted fixture' : 'PTT fixture'));
       if (url.endsWith('/index12.html')) return pttFixture.response(gate + pttFixture.listing(board, null, 'Older PTT fixture').replaceAll(pttFixture.id, 'M.1789176237.A.A3E'));
-      if (url.endsWith('/' + pttFixture.id + '.html')) return pttFixture.response(gate + pttFixture.article(board));
+      if (url.endsWith('/' + pttFixture.id + '.html')) return pttFixture.response(gate + pttFixture.article(board).replace('fixture signature', 'fixture signature <a href="https://i.ibb.co/abc1234/fixture.png">image</a>'));
       throw new Error('Unexpected PTT fixture URL');
     }
     if (url.startsWith('https://www.v2ex.com/')) {
       const node = { name: 'python', title: 'Python fixture' };
-      if (url.endsWith('/api/nodes/all.json')) { assert.equal(headers.Authorization, undefined); return { status: 200, headers: {}, body: Buffer.from(JSON.stringify([node])) }; }
+      const publicFixture = require('./helpers/v2ex-public-fixtures.cjs');
+      if (url.endsWith('/api/nodes/all.json')) { assert.deepEqual(headers, {}); return publicFixture.response([node]); }
+      if (url.endsWith('/feed/python.json')) { assert.deepEqual(headers, {}); return publicFixture.response(publicFixture.feed('python', [publicFixture.item(321)])); }
+      if (url.endsWith('/api/replies/show.json?topic_id=321')) { assert.deepEqual(headers, {}); publicReplyReads++; return publicFixture.response([{ ...publicFixture.replies[0], topic_id: 321 }]); }
       assert.equal(headers.Authorization, 'Bearer fixture-not-a-real-credential');
       assert.equal(limit, 2 * 1024 * 1024);
       let result;
-      const topic = { id: 123, node, title: '中文 AI fixture', content: 'code <div> & 中文 [next](https://www.v2ex.com/t/124)', member: { username: 'Alice' }, created: 1760000000, replies: 2 };
-      const reply = id => ({ id, content: '中文 reply ' + id, member: { username: 'Bob' }, created: 1760000001 });
+      const topic = { id: 123, node, title: '中文 AI fixture', content: 'code <div> & 中文 [next](https://www.v2ex.com/t/124) ![image](https://i.ibb.co/abc1234/fixture.png)', member: { username: 'Alice' }, created: 1760000000, replies: 2 };
+      const reply = id => ({ id, content: '中文 reply ' + id + (id === 124 ? '長'.repeat(4001) : ''), member: { username: 'Bob' }, created: 1760000001 });
       if (url.endsWith('/api/v2/nodes/python')) result = node;
       else if (url.endsWith('/nodes/python/topics?p=1')) result = [topic];
       else if (url.endsWith('/nodes/python/topics?p=2')) result = [];
@@ -83,7 +90,7 @@ Module._load = function (name, ...args) {
     if (url.endsWith('/software/dat/1608930976.dat')) return { status: 404, headers: {}, body: Buffer.alloc(0) };
     if (url.endsWith('/software/oyster/1608/1608930976.dat')) return { status: 200, headers: {}, body: Buffer.from('Archive<><>2026<>archived previous thread<>Previous fixture\nReply<><>2026<>https://egg.5ch.io/test/read.cgi/software/1608930977/<>\n') };
     if (url.endsWith('/software/dat/1608930977.dat')) return { status: 200, headers: {}, body: Buffer.from('Alice<><>2026 ID:ONE<>hello https://i.ibb.co/abc1234/fixture.png<>fixture\nBob<><>2026 ID:TWO<>&gt;&gt;1 second https://i.ibb.co/abc1234/fixture.png<>\nCarol<><>2026 ID:THREE<>last<>\n') };
-    if (url === 'https://i.ibb.co/abc1234/fixture.png') { fiveImageReads++; return { status: 200, headers: { 'content-type': 'image/png' }, body: fivePng }; }
+    if (url === 'https://i.ibb.co/abc1234/fixture.png') { assert.deepEqual(headers, {}); fiveImageReads++; return { status: 200, headers: { 'content-type': 'image/png' }, body: fivePng }; }
     throw new Error('Unexpected fixture URL');
   } };
 
@@ -566,7 +573,34 @@ app.whenReady().then(() => {
           document.querySelector('[data-source="v2ex"]').click();
           await waitFor(() => document.querySelector('.board-item')?.textContent.includes('/python/'));
           document.querySelector('.board-item').click();
-          await waitFor(() => document.querySelector('.error-state')?.textContent.includes('トークン'));
+          await waitFor(() => document.querySelector('.thread-card')?.textContent.includes('Public AI fixture'));
+          document.querySelector('.thread-card').click();
+          await waitFor(() => document.querySelectorAll('.post-card').length === 1);
+          if (!document.querySelector('.post-body').textContent.includes('Public <code> & 中文') || document.querySelector('.post-body script') || document.querySelector('.image-consent')) throw new Error('Unsafe public rendering');
+          if (![...document.querySelectorAll('.reader-notice')].some(e => e.textContent.includes('トークン不要'))) throw new Error('Public mode missing');
+          window.confirm = () => false;
+          clickText('公開返信を試験取得');
+          await new Promise(r => setTimeout(r, 100));
+          if (document.querySelectorAll('.post-card').length !== 1) throw new Error('Public reply consent ignored');
+        })()`);
+        assert.equal(publicReplyReads, 0);
+        await run(`(async () => {
+          window.confirm = () => true;
+          clickText('公開返信を試験取得');
+          await waitFor(() => document.querySelectorAll('.post-card').length === 2);
+          if ([...document.querySelectorAll('button')].some(b => b.textContent === '続きの投稿を読み込む')) throw new Error('Public reply pagination exposed');
+          if (!document.querySelector('.reader-notice').parentElement.textContent.includes('全件とは限りません')) throw new Error('Reply completeness disclosure missing');
+        })()`);
+        assert.equal(publicReplyReads, 1);
+        win.setSize(1401, 901); await new Promise(r => setTimeout(r, 100)); win.setSize(1400, 900);
+        await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); await new Promise(r => setTimeout(r, 300));
+        fs.writeFileSync(path.join(outputDir, 'v2ex-public.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+        win.setSize(390, 844); await new Promise(r => setTimeout(r, 200));
+        assert.equal(await run('document.documentElement.scrollWidth <= window.innerWidth'), true);
+        fs.writeFileSync(path.join(outputDir, 'v2ex-public-mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+        console.log('PASS: default token-free feed reader, inert HTML, explicit bounded replies, unknown reply count, public limitations and mobile layout');
+        win.setSize(1400, 900);
+        await run(`(async () => {
           clickText('V2EX接続設定');
           await waitFor(() => document.querySelector('#v2ex-token') && !document.querySelector('#v2ex-token').disabled);
           const input = document.querySelector('#v2ex-token');
@@ -580,12 +614,31 @@ app.whenReady().then(() => {
           if (JSON.stringify(localStorage).includes('fixture-not-a-real-credential')) throw new Error('Token stored in localStorage');
           const status = await window.electron.v2exSettings({ kind: 'status' });
           if (!status.configured || JSON.stringify(status).includes('fixture-not-a-real-credential')) throw new Error('Unsafe status');
+          if (status.mode !== 'public' || ![...document.querySelectorAll('button')].find(b => b.textContent === '接続を確認').disabled) throw new Error('Token silently enabled authenticated mode');
+          document.querySelectorAll('input[name="v2ex-mode"]')[1].click();
+          await waitFor(() => document.querySelector('.connection-message')?.textContent.includes('閲覧モードを保存しました'));
+          if (!(await window.electron.v2exSettings({ kind: 'status' })).mode.includes('authenticated')) throw new Error('Mode selection not saved');
           clickText('接続を確認');
           await waitFor(() => document.querySelector('.connection-message')?.textContent.includes('接続を確認しました'));
+          let disclosure = '';
+          window.confirm = message => { disclosure = message; return false; };
+          clickText('読み取り動作を確認');
+          await new Promise(r => setTimeout(r, 50));
+          if (!disclosure.includes('最大6要求') || document.querySelector('.verification-report')) throw new Error('Readiness consent not respected');
+          window.confirm = () => true;
+          clickText('読み取り動作を確認');
+          await waitFor(() => document.querySelector('.verification-report'));
+          const report = document.querySelector('.verification-report');
+          if (!report.querySelector('[data-check="connection"]').textContent.includes('確認済み') || !report.querySelector('[data-check="topicPages"]').textContent.includes('未確認')) throw new Error('Readiness statuses are misleading');
+          if (!report.querySelector('[data-check="replyPages"]').textContent.includes('確認済み') || report.textContent.includes('code <div>') || report.textContent.includes('fixture-not-a-real-credential')) throw new Error('Readiness report leaked content');
+          if (JSON.parse(localStorage.getItem('rift.library.v3')).sites.v2ex.reads['python/123']) throw new Error('Readiness recorded reading history');
         })()`);
-        await new Promise(r => setTimeout(r, 250));
-        await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+        win.setSize(1401, 901); await new Promise(r => setTimeout(r, 100)); win.setSize(1400, 900);
+        await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); await new Promise(r => setTimeout(r, 500));
         fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-settings.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+        await run("document.querySelector('.verification-report').scrollIntoView({block:'end'})");
+        await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); await new Promise(r => setTimeout(r, 300));
+        fs.writeFileSync(path.join(outputDir, 'v2ex-verification.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         const encryptedFile = path.join(process.env.SMOKE_USER_DATA, 'v2ex-token.bin');
         const connectionStatus = await run('window.electron.v2exSettings({ kind: "status" })');
         if (connectionStatus.persistent) {
@@ -601,15 +654,74 @@ app.whenReady().then(() => {
           document.querySelector('.thread-card').click();
           await waitFor(() => document.querySelectorAll('.post-card').length === 2);
           if (!document.querySelector('.post-body').textContent.includes('code <div> & 中文')) throw new Error('Plain content altered');
-          if (document.querySelector('.post-body img') || document.querySelector('.post-card .translate-block')) throw new Error('Unexpected remote content');
+          if (document.querySelector('.post-body img') || !document.querySelector('.post-card .translate-block')) throw new Error('Unexpected remote content or missing translation control');
           clickText('続きの投稿を読み込む');
           await waitFor(() => document.querySelectorAll('.post-card').length === 3);
+          if (!document.querySelector('[data-post-id="reply:124"] .translate-block button').disabled || !document.querySelector('[data-post-id="reply:124"]').textContent.includes('4,000文字')) throw new Error('Long translation not bounded');
           if (document.querySelectorAll('[data-post-id="reply:123"]').length !== 1) throw new Error('Duplicate replies');
           clickText('続きの投稿を読み込む');
           await waitFor(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '続きの投稿を読み込む'));
           clickText('本文を保存');
           await waitFor(() => document.body.textContent.includes('本文を保存しました'));
         })()`);
+        const exerciseChineseMedia = async source => {
+          const beforeTranslations = translatedTexts.length, beforeImages = fiveImageReads;
+          await run(`(async () => {
+            const translation = document.querySelector('.post-card .translate-block button');
+            if (document.querySelector('.translate-result')) throw new Error('Automatic translation');
+            let prompted = 0;
+            window.confirm = message => { if (!message.includes('DeepL')) throw new Error('Missing translation disclosure'); prompted++; return false; };
+            translation.click(); await new Promise(r => setTimeout(r, 50));
+            if (prompted !== 1 || document.querySelector('.translate-result')) throw new Error('Translation cancel ignored');
+            clickText('Gallery'); await waitFor(() => document.querySelector('.media-placeholder'));
+            if (document.querySelector('.gallery-thumb') || ![...document.querySelectorAll('button')].find(b => b.textContent === 'Save all').disabled) throw new Error('Images before consent');
+            window.confirm = message => { if (!message.includes('IPアドレス')) throw new Error('Missing image disclosure'); return false; };
+            clickText('画像を読み込む'); await new Promise(r => setTimeout(r, 50));
+            if (document.querySelector('.gallery-thumb')) throw new Error('Image cancel ignored');
+          })()`);
+          assert.equal(translatedTexts.length, beforeTranslations); assert.equal(fiveImageReads, beforeImages);
+          cancelSave = false;
+          const savesBefore = dialogCalls;
+          await run(`(async () => {
+            window.confirm = () => true;
+            clickText('画像を読み込む');
+            await waitFor(() => document.querySelector('.gallery-thumb')?.src.startsWith('blob:'));
+            document.querySelector('.gallery-link').click();
+            await waitFor(() => document.querySelector('.media-viewer img')?.src.startsWith('blob:'));
+            document.querySelector('.viewer-save').click();
+            await waitFor(() => document.querySelector('.viewer-save').disabled);
+            await waitFor(() => !document.querySelector('.viewer-save').disabled && document.querySelector('.viewer-save-status')?.textContent.includes('保存完了: 1/1'));
+          })()`);
+          assert.equal(dialogCalls, savesBefore + 1);
+          win.setSize(430, 850);
+          await run(`(async () => {
+            await waitFor(() => innerWidth < 500);
+            const box = document.querySelector('.media-viewer').getBoundingClientRect();
+            if (box.left < 0 || box.right > innerWidth || box.height > innerHeight || document.documentElement.scrollWidth > innerWidth) throw new Error('Chinese media mobile overflow');
+          })()`);
+          await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); await new Promise(r => setTimeout(r, 300));
+          fs.writeFileSync(path.join(outputDir, source.toLowerCase() + '-media-mobile.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+          win.setSize(1400, 900);
+          await run(`(async () => {
+            clickText('閉じる (Esc)');
+            clickText('画像の表示を停止');
+            await waitFor(() => document.querySelector('.media-placeholder') && !document.querySelector('.gallery-thumb'));
+            clickText('Thread'); await waitFor(() => document.querySelector('.post-card .translate-block button'));
+            const original = document.querySelector('.post-body').textContent;
+            document.querySelector('.post-card .translate-block button').click();
+            await waitFor(() => document.querySelector('.post-card .translate-result')?.textContent.includes('smoke translation'));
+            if (document.querySelector('.post-body').textContent !== original) throw new Error('Translation replaced original');
+            document.querySelector('.post-card .translate-block button').click();
+            await waitFor(() => !document.querySelector('.post-card .translate-result'));
+            document.querySelector('.post-card .translate-block button').click();
+            await waitFor(() => document.querySelector('.post-card .translate-result'));
+          })()`);
+          assert.equal(translatedTexts.length, beforeTranslations + 1);
+          assert.ok(fiveImageReads > beforeImages);
+          assert.ok(fs.readdirSync(process.env.SMOKE_USER_DATA).some(file => /^[a-f0-9]{24}(?:_\d+)?\.png$/.test(file)));
+          console.log('PASS: ' + source + ' explicit translation/image consent and cancellation, original retention, cached toggle, safe blob viewer/save, stop display');
+        };
+        await exerciseChineseMedia('V2EX');
         await new Promise(r => setTimeout(r, 250));
         await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
         fs.writeFileSync(path.join(__dirname, '../.test-artifacts/v2ex-desktop.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
@@ -666,6 +778,7 @@ app.whenReady().then(() => {
           clickText('本文を保存');
           await waitFor(() => document.body.textContent.includes('本文を保存しました'));
         })()`);
+        await exerciseChineseMedia('PTT');
         await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); await new Promise(r => setTimeout(r, 500));
         fs.writeFileSync(path.join(__dirname, '../.test-artifacts/ptt-desktop.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
         await run(`(async () => {
@@ -674,7 +787,7 @@ app.whenReady().then(() => {
           input.dispatchEvent(new Event('input', { bubbles: true }));
           await new Promise(r => setTimeout(r, 50)); document.querySelector('.url-bar').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
           await waitFor(() => document.querySelectorAll('.ptt-age-notice').length === 2);
-          if (document.querySelector('.post-card') || document.querySelector('.thread-card') || document.body.textContent.includes('Restricted fixture')) throw new Error('Age gate leaked content');
+          if (document.querySelector('.post-card') || document.querySelector('.thread-card') || document.querySelector('.translate-block') || document.querySelector('.image-consent') || document.body.textContent.includes('Restricted fixture')) throw new Error('Age gate leaked content');
           const before = await window.electron.pttConsent({ kind: 'status' }); if (before.accepted) throw new Error('Implicit consent');
           clickText('年齢確認を開く');
           await waitFor(() => document.body.textContent.includes('同意していません'));

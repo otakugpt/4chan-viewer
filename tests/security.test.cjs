@@ -146,6 +146,12 @@ test('main IPC checks window, document and main frame and serializes translation
   event.senderFrame.url = actual;
   await handlers['save-images'](event, [{ url: 'https://evil.test/image.jpg' }]);
   await handlers['save-images'](event, [{ url: 'https://i.4cdn.org/g/123.jpg', filename: '../123.jpg' }]);
+  for (const source of ['v2ex', 'ptt', 'unknown']) {
+    for (const url of ['https://www.v2ex.com/api/v2/topics/123', 'https://www.ptt.cc/bbs/Beauty/index.html', 'https://i.4cdn.org/g/123.jpg', 'http://127.0.0.1/private']) {
+      assert.equal((await handlers['save-images'](event, [{ source, url }])).status, 'error');
+    }
+    assert.equal((await handlers['save-images'](event, [{ source, url: 'https://i.ibb.co/abc1234/fixture.png', filename: '../secret.png' }])).status, 'error');
+  }
   const pending = invoke(event, 'hello');
   assert.match((await invoke(event, 'hello')).error, /in progress/);
   assert.equal(calls, 1);

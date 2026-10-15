@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { getBytes, serialQueue } from "./network";
 import { parseV2exUrl, validV2exId, validV2exNode } from "./v2ex-url";
+import { extractImages } from "./five-media";
+import { verifyV2ex } from "./v2ex-verification";
+import { createPublicV2ex } from "./v2ex-public";
 
 type Row = Record<string, unknown>;
 class AccessError extends Error {}
@@ -27,47 +30,65 @@ function post(v: unknown, order: number, root: boolean): PostInfo {
   if (content.length > 200_000) throw new Error("V2EXの本文が大きすぎます。");
   const seconds = Number(p.created);
   return { no: order, order, postId: (root ? "topic:" : "reply:") + id(p.id),
-    name: escaped(row(p.member).username, 100), com: escaped(content), ...(root ? { sub: escaped(p.title, 1000) } : {}),
+    name: escaped(row(p.member).username, 100), com: escaped(content), media: extractImages(content), ...(root ? { sub: escaped(p.title, 1000) } : {}),
     date: Number.isSafeInteger(seconds) && seconds > 0 && seconds < 10_000_000_000 ? new Date(seconds * 1000).toISOString() : undefined };
 }
 interface Cursor { key: string; page: number; offset: number; seen: string[]; until: number; revision: number }
-export function createV2exService(snapshot: () => { token: string; revision: number }, options: { request?: typeof getBytes; spacing?: number; now?: () => number } = {}) {
+export function createV2exService(snapshot: () => { token: string; revision: number; mode?: V2exMode }, options: { request?: typeof getBytes; spacing?: number; now?: () => number } = {}) {
   const request = options.request ?? getBytes, now = options.now ?? Date.now;
   const queue = serialQueue(options.spacing ?? 6100, 24);
   const cache = new Map<string, { until: number; value: unknown }>();
   const pending = new Map<string, Promise<unknown>>(), cursors = new Map<string, Cursor>();
-  let cooldown = 0;
+  let cooldown = 0, verifying = false, publicBlocked = false, generation = -1;
+  const publicMode = () => snapshot().mode !== "authenticated";
+  const publicReader = createPublicV2ex((endpoint, revision) => fetchJson(endpoint, false, revision), now);
   function assertRevision(revision: number) {
     if (revision !== snapshot().revision) throw new Error("接続設定が変更されました。再読み込みしてください。");
   }
   async function fetchJson(endpoint: string, auth: boolean, revision: number, fresh = false): Promise<unknown> {
     assertRevision(revision);
+    const assertAccess = () => {
+      if (!auth && publicBlocked) throw new AccessError("V2EXの公開取得を停止しています。閲覧拒否・転送・応答形式を確認できませんでした。別経路では取得しません。");
+      if (cooldown > now()) throw new AccessError("V2EXの利用制限中です。しばらく待って再試行してください。");
+    };
+    assertAccess();
     const cacheKey = revision + ":" + endpoint;
     const hit = cache.get(cacheKey);
     if (!fresh && hit && hit.until > now()) return hit.value;
     const existing = pending.get(cacheKey); if (existing) return existing;
     const task = queue(async () => {
       assertRevision(revision);
-      if (cooldown > now()) throw new Error("V2EXの利用制限中です。しばらく待って再試行してください。");
+      assertAccess();
       const token = snapshot().token;
       if (auth && !token) throw new AccessError("「V2EX接続設定」で個人トークンを設定してください。");
       let response;
       try { response = await request("https://www.v2ex.com" + endpoint, 2 * 1024 * 1024, auth ? { Authorization: "Bearer " + token } : {}); }
-      catch { throw new Error("V2EXに接続できません。通信環境を確認してください（転送先への認証送信は行いません）。"); }
+      catch (e) {
+        if (!auth && (e as NodeJS.ErrnoException)?.code === "REDIRECT") { publicBlocked = true; cache.clear(); }
+        throw new Error("V2EXに接続できません。通信環境を確認してください（転送先への認証送信は行いません）。");
+      }
       assertRevision(revision);
       const reset = Number(response.headers["x-rate-limit-reset"]);
       if (response.status === 429 || response.headers["x-rate-limit-remaining"] === "0") {
-        const retry = Number(response.headers["retry-after"]);
-        cooldown = now() + Math.min(3_600_000, Math.max(60_000, Number.isFinite(retry) ? retry * 1000 : 0, Number.isFinite(reset) ? reset * 1000 - now() : 0));
+        const header = response.headers["retry-after"];
+        const retry = typeof header === "string" && /^\d+$/.test(header) ? Number(header) * 1000 : typeof header === "string" ? Date.parse(header) - now() : 0;
+        cooldown = now() + Math.max(60_000, Number.isFinite(retry) ? retry : 0, Number.isFinite(reset) ? reset * 1000 - now() : 0);
       }
       if (response.status === 401 || response.status === 403) cache.clear();
-      if (response.status === 401) throw new AccessError("V2EXの認証に失敗しました。トークンの期限・失効を確認して再設定してください。");
+      if (!auth && ([401, 403].includes(response.status) || (response.status >= 300 && response.status < 400))) { publicBlocked = true; cache.clear(); }
+      if (response.status === 401) throw new AccessError(auth ? "V2EXの認証に失敗しました。トークンの期限・失効を確認して再設定してください。" : "V2EXの公開取得が拒否されました。認証への自動切替は行いません。");
       if (response.status === 403) throw new AccessError("このV2EXコンテンツの閲覧は許可されていません。");
       if (response.status === 404) throw new Error("V2EXのノードまたはトピックが見つかりません。");
       if (response.status === 429) throw new Error("V2EXの利用制限中です。しばらく待って再試行してください。");
       if (response.status !== 200) throw new Error("V2EXで通信エラーが発生しました。時間をおいて再試行してください。");
+      if (!auth && !/^application\/(?:json|feed\+json)(?:\s*;|$)/i.test(String(response.headers["content-type"] ?? ""))) {
+        publicBlocked = true; cache.clear(); throw new AccessError("V2EXの公開応答がJSONではありません。確認画面の可能性があるため取得を停止しました。");
+      }
       let parsed: unknown;
-      try { parsed = JSON.parse(response.body.toString("utf8")); } catch { throw new Error("V2EXの応答を読み取れません。"); }
+      try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(response.body)); } catch {
+        if (!auth) { publicBlocked = true; cache.clear(); }
+        throw new Error("V2EXの応答を読み取れません。");
+      }
       const value = auth ? (() => {
         const envelope = row(parsed);
         if (envelope.success !== true) { cache.clear(); throw new AccessError("V2EX APIが取得を拒否しました。トークンと閲覧権限を確認してください。"); }
@@ -75,7 +96,7 @@ export function createV2exService(snapshot: () => { token: string; revision: num
       })() : parsed;
       // A bounded cache, scoped to the credential generation; no disk response cache.
       if (cache.size >= 16) cache.delete(cache.keys().next().value!);
-      cache.set(cacheKey, { until: now() + (auth ? 30_000 : 86_400_000), value });
+      cache.set(cacheKey, { until: now() + (auth ? 30_000 : endpoint === "/api/nodes/all.json" ? 86_400_000 : 600_000), value });
       return value;
     });
     pending.set(cacheKey, task);
@@ -98,14 +119,35 @@ export function createV2exService(snapshot: () => { token: string; revision: num
     cursors.set(key, { ...current, page: current.page + 1, offset: current.offset + added.length, seen: [...current.seen, ...added] });
     return key;
   }
-  return async (input: unknown): Promise<V2exResult> => {
+  const execute = async (input: unknown, fresh = false): Promise<V2exResult> => {
     try {
       const r = row(input), { revision, token } = snapshot();
+      if (generation !== revision) { cache.clear(); cursors.clear(); generation = revision; }
       if (r.kind === "boards") return { boards: list(await fetchJson("/api/nodes/all.json", false, revision), 10_000).map(node) };
-      if (!["check", "threads", "posts", "resolve"].includes(String(r.kind))) throw new Error("V2EXへの要求が不正です。");
+      if (!["check", "verify", "threads", "posts", "resolve"].includes(String(r.kind))) throw new Error("V2EXへの要求が不正です。");
+      if (publicMode()) {
+        const result = await publicReader(r, revision);
+        assertRevision(revision);
+        return result;
+      }
       if (!token) throw new AccessError("「V2EX接続設定」で個人トークンを設定してください。");
-      const api = (endpoint: string) => fetchJson("/api/v2/" + endpoint, true, revision);
-      if (r.kind === "check") { node(await fetchJson("/api/v2/nodes/python", true, revision, true)); return { connected: true }; }
+      if (r.kind === "verify") {
+        if (!validV2exNode(r.board)) throw new Error("V2EXのノード指定が不正です。");
+        if (verifying) throw new Error("V2EXの動作確認はすでに実行中です。");
+        verifying = true;
+        try {
+          const verification = await verifyV2ex(r.board, async request => { assertRevision(revision); return execute(request, true); }, new Date(now()).toISOString());
+          assertRevision(revision);
+          return { verification };
+        } finally { verifying = false; }
+      }
+      const api = (endpoint: string) => fetchJson("/api/v2/" + endpoint, true, revision, fresh);
+      if (r.kind === "check") {
+        const board = r.board === undefined ? "python" : r.board;
+        if (!validV2exNode(board)) throw new Error("V2EXのノード指定が不正です。");
+        if (node(await fetchJson("/api/v2/nodes/" + board, true, revision, true)).board !== board) throw new Error("V2EXのノードの応答が一致しません。");
+        return { connected: true };
+      }
       if (r.kind === "resolve") {
         const target = parseV2exUrl(r.url);
         if (!target) throw new Error("対応するV2EXのノード・トピックURLを入力してください。");
@@ -143,7 +185,8 @@ export function createV2exService(snapshot: () => { token: string; revision: num
     } catch (e) {
       // No request, token, raw HTTP body, or networking error is exposed to the renderer.
       const message = e instanceof Error ? e.message : "";
-      return { error: /^(V2EX|このV2EX|「V2EX|接続設定|ページ指定|取得上限|対応するV2EX|トピック|ノード)/.test(message) ? message : "V2EXの取得に失敗しました。しばらく待って再試行してください。", ...(e instanceof AccessError ? { accessDenied: true } : {}) };
+      return { error: /^(V2EX|このV2EX|「V2EX|接続設定|ページ指定|取得上限|対応するV2EX|トピック|ノード)/.test(message) ? message : "V2EXの取得に失敗しました。しばらく待って再試行してください。", ...(e instanceof AccessError || publicMode() ? { accessDenied: true } : {}) };
     }
   };
+  return execute;
 }

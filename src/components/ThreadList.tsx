@@ -33,6 +33,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [ageRequired, setAgeRequired] = useState(false);
+  const [publicOnly, setPublicOnly] = useState(false);
 
   const provider = providers[source];
   const [query, setQuery] = useState("");
@@ -53,6 +54,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
       .then((pages) => {
         if (controller.signal.aborted) return;
         const page = requireReadyPage(pages);
+        setPublicOnly(page.publicOnly === true);
         if (cursor !== undefined) visitedCursors.current.add(cursor);
         if (page.nextCursor && visitedCursors.current.has(page.nextCursor)) throw new Error("ページの循環を検出しました。更新して再試行してください。");
         setThreads(previous => cursor === undefined ? page.items : mergePage(previous, page.items, item => item.threadId));
@@ -81,7 +83,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           {source === "ptt" && <button className="ui-btn ui-btn--small" aria-pressed={library.boards.includes(board)} onClick={() => toggleFavorite("boards", board, source)}>{library.boards.includes(board) ? "板の登録解除" : "板を登録"}</button>}
         </div>
         <p className="mt-1 text-xs text-slate-400">
-          {source === "4chan" ? "catalog の先頭 50 件を表示しています。" : source === "5ch" ? "検索結果の先頭500件を表示。更新間隔は最低30秒です。" : "取得済みのページ内を検索します。"}
+          {publicOnly ? "公式の公開フィード内を検索します。過去ページなし・更新は最大10分キャッシュ。" : source === "4chan" ? "catalog の先頭 50 件を表示しています。" : source === "5ch" ? "検索結果の先頭500件を表示。更新間隔は最低30秒です。" : "取得済みのページ内を検索します。"}
         </p>
       </div>
 
@@ -152,11 +154,11 @@ export const ThreadList: React.FC<ThreadListProps> = ({
 
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                       <div className="meta text-[11px] text-slate-400">
-                        {source === "ptt" ? "推・噓・→ は記事内に表示" : `レス ${thread.replies ?? 0}${source === "4chan" ? " / Images " + (thread.images ?? 0) : ""}`}
+                        {publicOnly ? "公開記事 / 返信数不明" : source === "ptt" ? "推・噓・→ は記事内に表示" : `レス ${thread.replies ?? 0}${source === "4chan" ? " / Images " + (thread.images ?? 0) : ""}`}
                       </div>
                     </div>
-                    {provider.capabilities.translation && <TranslateButton
-                      text={comment}
+                    {provider.capabilities.translation && <TranslateButton confirmSend={source === "v2ex" || source === "ptt"}
+                      text={source === "v2ex" || source === "ptt" ? plainText(thread.sub ?? "") : comment}
                       stopPropagation
                       className="thread-list-translate mt-2"
                     />}

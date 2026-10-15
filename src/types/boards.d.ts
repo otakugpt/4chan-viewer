@@ -9,7 +9,7 @@ declare global {
   interface RawPostInfo { archived?: boolean; no: number; sub?: string; com?: string; name?: string; tim?: number; ext?: string; date?: string; id?: string; media?: string[] }
   // no is a display/reference number; id remains the author's ID, not a post ID.
   interface PostInfo extends RawPostInfo { postId: PostId; order: number; reaction?: "推" | "噓" | "→" }
-  type PageResult<T> = { status: "ready"; items: T[]; nextCursor: string | null }
+  type PageResult<T> = { status: "ready"; items: T[]; nextCursor: string | null; publicOnly?: boolean }
     | { status: "age-confirmation-required" }
     | { status: "unavailable" };
   type FiveRequest = { kind: "boards" } | { kind: "threads"; board: string } | { kind: "posts"; board: string; thread: number } | { kind: "resolve"; url: string };

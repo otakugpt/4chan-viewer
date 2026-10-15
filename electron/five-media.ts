@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import { getBytes, serialQueue } from "./network";
 
 export function normalizeFiveImage(raw: unknown): string | null {
-  if (typeof raw !== "string" || raw.length > 2048) return null;
+  if (typeof raw !== "string" || raw.length > 2048 || /[\s\\]/.test(raw)) return null;
   try {
     const u = new URL(raw);
     if (u.protocol !== "https:" || u.username || u.password || u.port || u.search || u.hash) return null;
@@ -16,7 +16,8 @@ export function imageFilename(url: string) {
   return createHash("sha256").update(url).digest("hex").slice(0, 24) + "." + new URL(url).pathname.split(".").pop()!.toLowerCase();
 }
 export function extractImages(html: string): string[] {
-  const urls = html.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+  // Markdown delimiters and CJK punctuation are not part of supported image paths.
+  const urls = html.match(/https?:\/\/[^\s<>"'`()[\]{}\u3000-\u303f\uff00-\uffef]+/gi) ?? [];
   return [...new Set(urls.map(url => normalizeFiveImage(url.replace(/&amp;/g, "&"))).filter((url): url is string => Boolean(url)))].slice(0, 100);
 }
 export function validateImage(body: Buffer, mime: string, url: string): void {

@@ -77,9 +77,9 @@ test('V2EX URL parsing strictly confines internal navigation', () => {
 });
 test('public nodes omit credentials, while authenticated endpoints use only fixed GET paths', async () => {
   const calls = [];
-  const service = createV2exService(() => ({ token: fixtureToken, revision: 0 }), { spacing: 0, request: async (url, limit, headers) => {
+  const service = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision: 0 }), { spacing: 0, request: async (url, limit, headers) => {
     calls.push(url); assert.equal(limit, 2 * 1024 * 1024);
-    if (url.endsWith('/api/nodes/all.json')) { assert.deepEqual(headers, {}); return { ...response([]), body: Buffer.from(JSON.stringify([node])) }; }
+    if (url.endsWith('/api/nodes/all.json')) { assert.deepEqual(headers, {}); return { ...response([]), headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify([node])) }; }
     assert.equal(headers.Authorization, 'Bearer ' + fixtureToken);
     assert.equal(url, 'https://www.v2ex.com/api/v2/nodes/python'); return response(node);
   } });
@@ -91,7 +91,7 @@ test('public nodes omit credentials, while authenticated endpoints use only fixe
 });
 test('posts use stable distinct IDs, escaped plain text and opaque bound pagination', async () => {
   let calls = 0;
-  const service = createV2exService(() => ({ token: fixtureToken, revision: 0 }), { spacing: 0, request: async url => {
+  const service = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision: 0 }), { spacing: 0, request: async url => {
     calls++;
     if (url.endsWith('/topics/123')) return response(root);
     if (url.endsWith('?p=1')) return response([reply(123), reply(124)]);
@@ -102,7 +102,7 @@ test('posts use stable distinct IDs, escaped plain text and opaque bound paginat
   assert.deepEqual(first.posts.map(p => [p.postId, p.order]), [['topic:123', 1], ['reply:123', 2], ['reply:124', 3]]);
   assert.match(first.posts[0].com, /a &lt; b\) &amp; 中文/);
   assert.match(first.posts[0].com, /追記 &lt;img/);
-  assert.equal(first.posts[0].media, undefined);
+  assert.deepEqual(first.posts[0].media, []);
   assert.ok(first.nextCursor);
   assert.ok((await service({ kind: 'posts', board: 'other', thread: '123', cursor: first.nextCursor })).error);
   assert.equal(calls, 2);
@@ -112,36 +112,36 @@ test('posts use stable distinct IDs, escaped plain text and opaque bound paginat
 });
 test('repeated pages stop safely and credentials invalidate old cursors and responses', async () => {
   let revision = 0, calls = 0;
-  const service = createV2exService(() => ({ token: fixtureToken, revision }), { spacing: 0, request: async () => { calls++; return response([root]); } });
+  const service = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision }), { spacing: 0, request: async () => { calls++; return response([root]); } });
   const first = await service({ kind: 'threads', board: 'python' });
   assert.match((await service({ kind: 'threads', board: 'python', cursor: first.nextCursor })).error, /同じページ/);
   revision++;
   assert.ok((await service({ kind: 'threads', board: 'python', cursor: first.nextCursor })).error);
   assert.equal(calls, 2);
-  const inflight = createV2exService(() => ({ token: fixtureToken, revision }), { spacing: 0, request: async () => { revision++; return response(node); } });
+  const inflight = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision }), { spacing: 0, request: async () => { revision++; return response(node); } });
   assert.match((await inflight({ kind: 'check' })).error, /接続設定が変更/);
 });
 test('token absence and all error responses stay generic and exclude sensitive upstream text', async () => {
-  const missing = createV2exService(() => ({ token: '', revision: 0 }), { spacing: 0, request: async () => { throw new Error('must not run'); } });
+  const missing = createV2exService(() => ({ mode: 'authenticated', token: '', revision: 0 }), { spacing: 0, request: async () => { throw new Error('must not run'); } });
   assert.match((await missing({ kind: 'check' })).error, /トークン/);
   for (const status of [301, 401, 403, 404, 429, 500]) {
-    const service = createV2exService(() => ({ token: fixtureToken, revision: 0 }), { spacing: 0, request: async () => response(fixtureToken, status) });
+    const service = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision: 0 }), { spacing: 0, request: async () => response(fixtureToken, status) });
     const result = await service({ kind: 'check' }); assert.ok(result.error); assert.ok(!result.error.includes(fixtureToken));
   }
   for (const request of [async () => { throw new Error(fixtureToken); }, async () => ({ ...response(null), body: Buffer.from(fixtureToken) }), async () => ({ ...response(null), body: Buffer.from(JSON.stringify({ success: false, message: fixtureToken })) })]) {
-    const service = createV2exService(() => ({ token: fixtureToken, revision: 0 }), { spacing: 0, request });
+    const service = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision: 0 }), { spacing: 0, request });
     assert.ok(!(await service({ kind: 'check' })).error.includes(fixtureToken));
   }
 });
 test('quota and Retry-After prevent requests until cooldown expires', async () => {
   let time = 1_000_000, calls = 0;
-  const service = createV2exService(() => ({ token: fixtureToken, revision: 0 }), { spacing: 0, now: () => time, request: async () => { calls++; return response(null, 429, { 'retry-after': '120' }); } });
+  const service = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision: 0 }), { spacing: 0, now: () => time, request: async () => { calls++; return response(null, 429, { 'retry-after': '120' }); } });
   assert.ok((await service({ kind: 'check' })).error);
   await service({ kind: 'check' }); assert.equal(calls, 1);
   time += 120_001; await service({ kind: 'check' }); assert.equal(calls, 2);
 });
 test('resolve uses topic canonical node, never fetches a link-supplied host', async () => {
-  const service = createV2exService(() => ({ token: fixtureToken, revision: 0 }), { spacing: 0, request: async url => {
+  const service = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision: 0 }), { spacing: 0, request: async url => {
     assert.equal(url, 'https://www.v2ex.com/api/v2/topics/123'); return response(root);
   } });
   assert.deepEqual(await service({ kind: 'resolve', url: 'https://hk.v2ex.com/t/123#reply3' }), { board: 'python', thread: '123' });
@@ -150,7 +150,7 @@ test('resolve uses topic canonical node, never fetches a link-supplied host', as
 
 test('expired cursors reject before network access, duplicate requests coalesce', async () => {
   let time = 1000, calls = 0;
-  const service = createV2exService(() => ({ token: fixtureToken, revision: 0 }), { spacing: 0, now: () => time, request: async () => { calls++; return response([root]); } });
+  const service = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision: 0 }), { spacing: 0, now: () => time, request: async () => { calls++; return response([root]); } });
   const results = await Promise.all([service({ kind: 'threads', board: 'python' }), service({ kind: 'threads', board: 'python' })]);
   assert.equal(calls, 1);
   assert.ok(results[0].nextCursor);
@@ -161,16 +161,16 @@ test('expired cursors reject before network access, duplicate requests coalesce'
 
 test('malformed topic identity and mismatched node fail closed; auth failure carries access denial', async () => {
   for (const invalid of [{ ...root, id: [123] }, { ...root, node: { name: '../x', title: 'bad' } }, { ...root, content: null }]) {
-    const service = createV2exService(() => ({ token: fixtureToken, revision: 0 }), { spacing: 0, request: async () => response(invalid) });
+    const service = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision: 0 }), { spacing: 0, request: async () => response(invalid) });
     assert.ok((await service({ kind: 'posts', board: 'python', thread: '123' })).error);
   }
-  const denied = createV2exService(() => ({ token: fixtureToken, revision: 0 }), { spacing: 0, request: async () => response(null, 403) });
+  const denied = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision: 0 }), { spacing: 0, request: async () => response(null, 403) });
   assert.equal((await denied({ kind: 'check' })).accessDenied, true);
 });
 
 test('explicit connection checks never report cached authentication success', async () => {
   let calls = 0;
-  const service = createV2exService(() => ({ token: fixtureToken, revision: 0 }), { spacing: 0, request: async () => ++calls === 1 ? response(node) : response(null, 401) });
+  const service = createV2exService(() => ({ mode: 'authenticated', token: fixtureToken, revision: 0 }), { spacing: 0, request: async () => ++calls === 1 ? response(node) : response(null, 401) });
   assert.equal((await service({ kind: 'check' })).connected, true);
   assert.equal((await service({ kind: 'check' })).accessDenied, true);
   assert.equal(calls, 2);

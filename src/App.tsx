@@ -21,6 +21,12 @@ const EmptyPane = ({ title }: { title: string }) => <div className="panel-surfac
 export const App: React.FC = () => {
   const [connectionSettings, setConnectionSettings] = useState(false);
   const [connectionRevision, setConnectionRevision] = useState(0);
+  const [v2exMode, setV2exMode] = useState<V2exMode | null>(null);
+  useEffect(() => {
+    let active = true;
+    void window.electron?.v2exSettings({ kind: "status" }).then(status => { if (active) setV2exMode(status.mode); }).catch(() => { if (active) setV2exMode(null); });
+    return () => { active = false; };
+  }, [connectionRevision]);
   const [pttRevision, setPttRevision] = useState(0);
   const [pttRevoking, setPttRevoking] = useState(false);
   const siteRevision = (site: BoardSource) => site === "v2ex" ? connectionRevision : site === "ptt" ? pttRevision : 0;
@@ -144,8 +150,8 @@ export const App: React.FC = () => {
     })}</nav>}
     {tabNotice && <p className="reader-notice" role="status">{tabNotice}</p>}
     {(storageError || tabStorageError) && <p className="reader-notice" role="alert">{storageError || tabStorageError}</p>}
-    {browseSource === "v2ex" && <p className="reader-notice">V2EX 試験対応 / 個人トークンが必要です。原文テキストのみ表示し、画像・翻訳は後続フェーズで対応します。API取得は約6秒間隔です。</p>}
-    {browseSource === "ptt" && <p className="reader-notice">PTT 公開Web版 / 一覧は人気板です。板名の直接指定も可能です。原文とコメントを表示し、画像・翻訳は未対応。通信は約3秒間隔、年齢確認の同意は起動中だけ保持します。</p>}
+    {browseSource === "v2ex" && <p className="reader-notice">V2EX 試験対応 / {v2exMode === "public" ? "公開モード・トークン不要。最新の公開フィードのみ。返信は手動の試験取得、過去ページは非対応。キャッシュは最大10分です。" : v2exMode === "authenticated" ? "認証モード・個人トークンを使用します。画像取得は確認後のみ実行します。" : "接続設定で閲覧モードを確認してください。"} 通信は約6秒間隔。DeepL翻訳は確認後のみ実行します。</p>}
+    {browseSource === "ptt" && <p className="reader-notice">PTT 公開Web版 / 一覧は人気板です。板名の直接指定も可能です。画像取得・DeepL翻訳は確認後のみ。通信は約3秒間隔、年齢確認の同意は起動中だけ保持します。</p>}
     <main className="workspace-grid">
       <section className="workspace-pane"><LibrarySidebar key={browseSource + siteRevision(browseSource)} source={browseSource} selectedBoard={listBoard} mode={mode} onMode={next => { navigation.current++; setOpening(false); setMode(next); }} onBoard={chooseBoard} /></section>
       <section className="workspace-pane">{mode === "saved" ? <SavedThreadList onOpen={doc => { if (navigation.current === renderedNavigation) setSavedDoc(doc); }} onDelete={key => { if (!key || savedDoc?.key === key) setSavedDoc(null); }} /> : mode !== "board" ? <LibraryList key={mode} mode={mode} active={source + "/" + board + "/" + thread} onSelect={openTab} /> : listBoard ? <ThreadList key={browseSource + listBoard + siteRevision(browseSource)} source={browseSource} board={listBoard} onSelect={t => select(listBoard, t)} selectedThread={source === browseSource && board === listBoard ? thread : null} /> : <EmptyPane title="Select a Board" />}</section>

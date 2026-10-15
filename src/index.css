@@ -712,6 +712,12 @@ input[type=checkbox] { accent-color: var(--accent); margin-right: 5px; }
 .connection-dialog .panel-search { margin-top: 6px; }
 .connection-remember { display: flex; align-items: center; gap: 8px; margin: 16px 0; }
 .connection-state, .connection-message { padding: 10px; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.connection-verification { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 16px; }
+.connection-verification h3 { font-size: .9rem; font-weight: 600; }
+.connection-verification .panel-search { min-width: 0; flex: 1 1 140px; }
+.verification-report { margin-top: 12px; border-left: 2px solid var(--border); padding-left: 12px; overflow-wrap: anywhere; }
+.verification-report li { margin: 10px 0; font-size: .8rem; }
+.verification-report li p { margin: 4px 0; }
 .ptt-age-notice { line-height: 1.7; }
 .ptt-age-notice button { margin-top: 10px; }
 .ptt-reaction { margin-right: 6px; font-size: .85rem; color: var(--accent); }
