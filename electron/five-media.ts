@@ -8,7 +8,8 @@ export function normalizeFiveImage(raw: unknown): string | null {
     const u = new URL(raw);
     if (u.protocol !== "https:" || u.username || u.password || u.port || u.search || u.hash) return null;
     const valid = (u.hostname === "i.imgur.com" && /^\/[a-zA-Z0-9]{5,16}\.(jpg|jpeg|png|gif|webp)$/i.test(u.pathname)) ||
-      (["i.postimg.cc", "i.ibb.co"].includes(u.hostname) && /^\/[a-zA-Z0-9]{6,16}\/[a-zA-Z0-9_-]{1,100}\.(jpg|jpeg|png|gif|webp)$/i.test(u.pathname));
+      (["i.postimg.cc", "i.ibb.co"].includes(u.hostname) && /^\/[a-zA-Z0-9]{6,16}\/[a-zA-Z0-9_-]{1,100}\.(jpg|jpeg|png|gif|webp)$/i.test(u.pathname)) ||
+      (u.hostname === "i.urusai.cc" && /^https:\/\/i\.urusai\.cc\/[a-zA-Z0-9]{1,100}\.(jpg|jpeg|png|gif|webp)$/i.test(raw));
     return valid ? u.href : null;
   } catch { return null; }
 }

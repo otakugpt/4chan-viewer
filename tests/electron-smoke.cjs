@@ -61,7 +61,7 @@ Module._load = function (name, ...args) {
       if (url.endsWith('/index.html')) return pttFixture.response(gate + pttFixture.listing(board, '12', board === 'Beauty' ? 'Restricted fixture' : 'PTT fixture'));
       if (url.endsWith('/index12.html')) return pttFixture.response(gate + pttFixture.listing(board, null, 'Older PTT fixture').replaceAll(pttFixture.id, 'M.1789176237.A.A3E'));
       if (url.endsWith('/M.1789176237.A.A3E.html')) return pttFixture.response(pttFixture.article(board));
-      if (url.endsWith('/' + pttFixture.id + '.html')) return pttFixture.response(gate + pttFixture.article(board).replace('fixture signature', 'fixture signature <a href="https://i.ibb.co/abc1234/fixture.png">image</a>'));
+      if (url.endsWith('/' + pttFixture.id + '.html')) return pttFixture.response(gate + pttFixture.article(board).replace('fixture signature', 'fixture signature <a href="https://i.urusai.cc/RiftTest.png">image</a>'));
       throw new Error('Unexpected PTT fixture URL');
     }
     if (url.startsWith('https://www.v2ex.com/')) {
@@ -91,7 +91,7 @@ Module._load = function (name, ...args) {
     if (url.endsWith('/software/dat/1608930976.dat')) return { status: 404, headers: {}, body: Buffer.alloc(0) };
     if (url.endsWith('/software/oyster/1608/1608930976.dat')) return { status: 200, headers: {}, body: Buffer.from('Archive<><>2026<>archived previous thread<>Previous fixture\nReply<><>2026<>https://egg.5ch.io/test/read.cgi/software/1608930977/<>\n') };
     if (url.endsWith('/software/dat/1608930977.dat')) return { status: 200, headers: {}, body: Buffer.from('Alice<><>2026 ID:ONE<>hello https://i.ibb.co/abc1234/fixture.png<>fixture\nBob<><>2026 ID:TWO<>&gt;&gt;1 second https://i.ibb.co/abc1234/fixture.png<>\nCarol<><>2026 ID:THREE<>last<>\n') };
-    if (url === 'https://i.ibb.co/abc1234/fixture.png') { assert.deepEqual(headers, {}); fiveImageReads++; return { status: 200, headers: { 'content-type': 'image/png' }, body: fivePng }; }
+    if (url === 'https://i.ibb.co/abc1234/fixture.png' || url === 'https://i.urusai.cc/RiftTest.png') { assert.deepEqual(headers, {}); fiveImageReads++; return { status: 200, headers: { 'content-type': 'image/png' }, body: fivePng }; }
     throw new Error('Unexpected fixture URL');
   } };
 
