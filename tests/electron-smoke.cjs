@@ -35,6 +35,7 @@ let networkReads = 0;
 let publicReplyReads = 0;
 let externalPrompts = 0, allowExternal = false;
 let pttPrompts = 0, allowPtt = false;
+let largeImageSize = 0, largeImagePrompts = 0, allowLargeImage = false, largeImageReads = 0;
 const pttCookies = [], pttFixture = require('./helpers/ptt-fixtures.cjs');
 const externalOpened = [];
 const fivePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB9sAAAAASUVORK5CYII=', 'base64');
@@ -91,12 +92,19 @@ Module._load = function (name, ...args) {
     if (url.endsWith('/software/dat/1608930976.dat')) return { status: 404, headers: {}, body: Buffer.alloc(0) };
     if (url.endsWith('/software/oyster/1608/1608930976.dat')) return { status: 200, headers: {}, body: Buffer.from('Archive<><>2026<>archived previous thread<>Previous fixture\nReply<><>2026<>https://egg.5ch.io/test/read.cgi/software/1608930977/<>\n') };
     if (url.endsWith('/software/dat/1608930977.dat')) return { status: 200, headers: {}, body: Buffer.from('Alice<><>2026 ID:ONE<>hello https://i.ibb.co/abc1234/fixture.png<>fixture\nBob<><>2026 ID:TWO<>&gt;&gt;1 second https://i.ibb.co/abc1234/fixture.png<>\nCarol<><>2026 ID:THREE<>last<>\n') };
-    if (url === 'https://i.ibb.co/abc1234/fixture.png' || url === 'https://i.urusai.cc/RiftTest.png') { assert.deepEqual(headers, {}); fiveImageReads++; return { status: 200, headers: { 'content-type': 'image/png' }, body: fivePng }; }
+    if (url === 'https://i.ibb.co/abc1234/fixture.png' || url === 'https://i.urusai.cc/RiftTest.png') {
+      assert.deepEqual(headers, {}); fiveImageReads++;
+      if (url === 'https://i.urusai.cc/RiftTest.png' && largeImageSize) {
+        if (limit < largeImageSize) throw Object.assign(new Error('Fixture size limit'), { code: 'RESPONSE_TOO_LARGE', limit, size: largeImageSize, exact: true, status: 200 });
+        assert.equal(limit, 100 * 1024 * 1024); largeImageReads++;
+      }
+      return { status: 200, headers: { 'content-type': 'image/png' }, body: fivePng };
+    }
     throw new Error('Unexpected fixture URL');
   } };
 
   if (name === './services') return { ...originalLoad.call(this, name, ...args), downloadImage: async url => { downloadedUrls.push(url); downloadCalls++; if (downloadCalls <= 3) throw new Error('Fixture download failure'); } };
-  return name === 'electron' ? { ...electron, BrowserWindow: HiddenWindow, shell: { openExternal: async url => { externalOpened.push(url); } }, dialog: { showMessageBox: async options => { if (options.message === '18歳以上であることを確認してください') { pttPrompts++; assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0); return { response: allowPtt ? 1 : 0 }; } assert.equal(options.message, "外部サイトへ遷移します"); externalPrompts++; return { response: allowExternal ? 1 : 0 }; }, showOpenDialog: async () => { dialogCalls++; await new Promise(r => setTimeout(r, 100)); return { canceled: cancelSave, filePaths: cancelSave ? [] : [process.env.SMOKE_USER_DATA] }; } } } : originalLoad.call(this, name, ...args);
+  return name === 'electron' ? { ...electron, BrowserWindow: HiddenWindow, shell: { openExternal: async url => { externalOpened.push(url); } }, dialog: { showMessageBox: async options => { if (options.title === '大きい画像の取得確認') { largeImagePrompts++; assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0); assert.ok(options.detail.includes('100MB')); assert.ok(options.detail.includes('i.urusai.cc')); return { response: allowLargeImage ? 1 : 0 }; } if (options.message === '18歳以上であることを確認してください') { pttPrompts++; assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0); return { response: allowPtt ? 1 : 0 }; } assert.equal(options.message, "外部サイトへ遷移します"); externalPrompts++; return { response: allowExternal ? 1 : 0 }; }, showOpenDialog: async () => { dialogCalls++; await new Promise(r => setTimeout(r, 100)); return { canceled: cancelSave, filePaths: cancelSave ? [] : [process.env.SMOKE_USER_DATA] }; } } } : originalLoad.call(this, name, ...args);
 };
 const timeout = setTimeout(() => { console.error('Smoke test timed out'); app.exit(1); }, 90000);
 app.whenReady().then(() => {
@@ -828,6 +836,47 @@ app.whenReady().then(() => {
           await waitFor(() => document.body.textContent.includes('本文を保存しました'));
         })()`);
         await exerciseChineseMedia('PTT');
+        largeImageSize = 21 * 1024 * 1024;
+        await run(`(async () => {
+          window.confirm = () => true;
+          clickText('画像を読み込む');
+          await waitFor(() => document.querySelector('.media-error')?.textContent.includes('キャンセル'));
+          if (document.querySelector('.gallery-thumb')) throw new Error('Large image displayed without native consent');
+        })()`);
+        assert.equal(largeImagePrompts, 1); assert.equal(largeImageReads, 0);
+        allowLargeImage = true;
+        await run(`(async () => {
+          document.querySelector('.media-error button').click();
+          await waitFor(() => document.querySelector('.gallery-thumb')?.src.startsWith('blob:'));
+        })()`);
+        assert.equal(largeImagePrompts, 2); assert.equal(largeImageReads, 1);
+        allowLargeImage = false;
+        await run(`(async () => {
+          document.querySelector('.gallery-meta button').click();
+          await waitFor(() => document.querySelector('.gallery-meta button').disabled);
+          await waitFor(() => !document.querySelector('.gallery-meta button').disabled && document.querySelector('.status-bar').textContent.includes('0/1'));
+        })()`);
+        assert.equal(largeImagePrompts, 3); assert.equal(largeImageReads, 1);
+        allowLargeImage = true;
+        await run(`(async () => {
+          document.querySelector('.gallery-meta button').click();
+          await waitFor(() => document.querySelector('.gallery-meta button').disabled);
+          await waitFor(() => !document.querySelector('.gallery-meta button').disabled && document.querySelector('.status-bar').textContent.includes('保存完了: 1/1'));
+          clickText('画像の表示を停止');
+          await waitFor(() => !document.querySelector('.gallery-thumb'));
+        })()`);
+        assert.equal(largeImagePrompts, 4); assert.equal(largeImageReads, 2);
+        largeImageSize = 101 * 1024 * 1024;
+        await run(`(async () => {
+          clickText('画像を読み込む');
+          await waitFor(() => document.querySelector('.media-error')?.textContent.includes('100MB'));
+          clickText('画像の表示を停止');
+          clickText('Thread');
+          await waitFor(() => document.querySelector('.post-body'));
+        })()`);
+        assert.equal(largeImagePrompts, 4); assert.equal(largeImageReads, 2);
+        largeImageSize = 0;
+        console.log('PASS: native large-image warning, cancellation without retry, one-time approval for display and save, and 100 MiB hard ceiling');
         const beforeEmptyImages = fiveImageReads;
         await run(`(async () => {
           document.querySelectorAll('.thread-card')[1].click();

@@ -40,7 +40,7 @@ test('URUSAI image reads and saves retain byte validation, limits and credential
   const response = { status: 200, headers: { 'content-type': 'image/png' }, body: png };
   const reader = load('five-media', {
     './network': { serialQueue: () => fn => fn(), getBytes: async (url, limit, headers) => {
-      calls++; assert.equal(url, urusai); assert.equal(limit, 8 * 1024 * 1024); assert.equal(headers, undefined); return response;
+      calls++; assert.equal(url, urusai); assert.equal(limit, 20 * 1024 * 1024); assert.equal(headers, undefined); return response;
     } },
     'node:fs/promises': { open: async (_path, flags) => { assert.equal(flags, 'wx'); return {
       writeFile: async bytes => { assert.deepEqual(bytes, png); writes++; }, close: async () => {},
@@ -98,7 +98,7 @@ test('shared image reader sends neither site credentials nor age cookies and val
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB9sAAAAASUVORK5CYII=', 'base64');
   let calls = 0;
   const reader = load('five-media', { './network': { serialQueue: () => fn => fn(), getBytes: async (url, limit, headers) => {
-    calls++; assert.equal(url, image); assert.equal(limit, 8 * 1024 * 1024); assert.equal(headers, undefined);
+    calls++; assert.equal(url, image); assert.equal(limit, 20 * 1024 * 1024); assert.equal(headers, undefined);
     return { status: 200, headers: { 'content-type': 'image/png' }, body: png };
   } } });
   assert.equal((await reader.readFiveImage(image)).mime, 'image/png');

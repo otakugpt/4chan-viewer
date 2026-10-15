@@ -1,6 +1,19 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import { getBytes, serialQueue } from "./network";
+import { getBytes, serialQueue, responseTooLarge } from "./network";
+
+export const IMAGE_NORMAL_LIMIT = 20 * 1024 * 1024;
+export const IMAGE_HARD_LIMIT = 100 * 1024 * 1024;
+export interface LargeImageInfo { url: string; size: number; exact: boolean }
+export type ConfirmLargeImage = (info: LargeImageInfo) => Promise<boolean>;
+export class ImagePolicyError extends Error {}
+
+function sizeFailure(error: unknown, limit: number): { size: number; exact: boolean } | null {
+  const value = error as { code?: unknown; limit?: unknown; status?: unknown; size?: unknown; exact?: unknown } | null;
+  return value?.code === "RESPONSE_TOO_LARGE" && value.limit === limit && value.status === 200 &&
+    typeof value.size === "number" && Number.isSafeInteger(value.size) && value.size > limit && typeof value.exact === "boolean"
+    ? { size: value.size, exact: value.exact } : null;
+}
 
 export function normalizeFiveImage(raw: unknown): string | null {
   if (typeof raw !== "string" || raw.length > 2048 || /[\s\\]/.test(raw)) return null;
@@ -54,19 +67,37 @@ export function validateImage(body: Buffer, mime: string, url: string): void {
   if (!width || !height || width > 16384 || height > 16384 || width * height > 16_000_000) throw new Error("Image dimensions exceed limits");
 }
 const queue = serialQueue(750);
-export function readFiveImage(raw: unknown) {
+export function readFiveImage(raw: unknown, confirmLarge?: ConfirmLargeImage) {
   const url = normalizeFiveImage(raw);
   if (!url) return Promise.reject(new Error("Unsupported image URL"));
   return queue(async () => {
-    const r = await getBytes(url, 8 * 1024 * 1024);
+    const fetchImage = async (limit: number) => {
+      const result = await getBytes(url, limit);
+      if (result.body.length > limit) throw responseTooLarge(limit, result.body.length, true, result.status);
+      return result;
+    };
+    let r;
+    try { r = await fetchImage(IMAGE_NORMAL_LIMIT); }
+    catch (error) {
+      const size = sizeFailure(error, IMAGE_NORMAL_LIMIT);
+      if (!size) throw error;
+      if (size.size > IMAGE_HARD_LIMIT) throw new ImagePolicyError("画像が安全上限の100MBを超えるため、取得を停止しました。");
+      // Approval is supplied only by the main process, scoped to this URL and this one retry.
+      if (!confirmLarge || !await confirmLarge({ url, ...size })) throw new ImagePolicyError("20MBを超える画像の取得をキャンセルしました。再試行する場合は改めて確認します。");
+      try { r = await fetchImage(IMAGE_HARD_LIMIT); }
+      catch (retryError) {
+        if (sizeFailure(retryError, IMAGE_HARD_LIMIT)) throw new ImagePolicyError("画像が安全上限の100MBを超えるため、取得を停止しました。");
+        throw retryError;
+      }
+    }
     if (r.status !== 200) throw new Error("Image unavailable");
     const mime = String(r.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
     validateImage(r.body, mime, url);
     return { bytes: r.body, mime };
   });
 }
-export async function downloadFiveImage(url: string, filePath: string) {
-  const image = await readFiveImage(url);
+export async function downloadFiveImage(url: string, filePath: string, confirmLarge?: ConfirmLargeImage) {
+  const image = await readFiveImage(url, confirmLarge);
   const file = await fs.open(filePath, "wx");
   try { await file.writeFile(image.bytes); }
   catch (error) { await file.close(); await fs.unlink(filePath).catch(() => {}); throw error; }

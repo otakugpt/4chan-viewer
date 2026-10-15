@@ -8,6 +8,9 @@ for (const [ip, prefix] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10],
   ["192.88.99.0", 24], ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4]] as [string, number][]) blocked.addSubnet(ip, prefix);
 export const isPublicIPv4 = (ip: string) => isIP(ip) === 4 && !blocked.check(ip);
 export interface ByteResponse { status: number; headers: Record<string, string | string[] | undefined>; body: Buffer }
+export function responseTooLarge(limit: number, size: number, exact: boolean, status: number) {
+  return Object.assign(new Error("Response too large"), { code: "RESPONSE_TOO_LARGE", limit, size, exact, status });
+}
 
 // Resolve once, reject private networks, then pin the socket to the checked address.
 export async function getBytes(raw: string, limit: number, headers: Record<string, string> = {}): Promise<ByteResponse> {
@@ -37,12 +40,12 @@ export async function getBytes(raw: string, limit: number, headers: Record<strin
         response.destroy(); reject(new Error("Unexpected encoding")); return;
       }
       const length = Number(response.headers["content-length"] ?? 0);
-      if (length > limit) { response.destroy(); reject(new Error("Response too large")); return; }
+      if (length > limit) { response.destroy(); reject(responseTooLarge(limit, length, true, response.statusCode ?? 0)); return; }
       const chunks: Buffer[] = [];
       let size = 0;
       response.on("data", (chunk: Buffer) => {
         size += chunk.length;
-        if (size > limit) { response.destroy(new Error("Response too large")); return; }
+        if (size > limit) { response.destroy(responseTooLarge(limit, size, false, response.statusCode ?? 0)); return; }
         chunks.push(chunk);
       });
       response.on("error", reject);

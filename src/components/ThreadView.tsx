@@ -115,7 +115,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
   const pageIndex = Math.min(page, Math.max(0, Math.ceil(mediaList.length / pageSize) - 1));
   const currentMedia = mediaList.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
   const allowImages = () => {
-    if (!mediaList.length || !window.confirm("外部画像ホストに接続するとIPアドレス等が相手に伝わります。対応画像（Imgur / Postimages / ImgBB / URUSAI、1枚8MB以内）を読み込みますか？")) return false;
+    if (!mediaList.length || !window.confirm("外部画像ホストに接続するとIPアドレス等が相手に伝わります。対応画像（Imgur / Postimages / ImgBB / URUSAI、通常20MB、超える画像は個別確認・最大100MB）を読み込みますか？")) return false;
     setConsent(true);
     setViewMode("gallery");
     return true;
@@ -199,7 +199,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
       {publicOnly && <div className="reader-notice"><p>公式フィードで公開された本文です。本文が省略される場合があります。画像取得・過去ページには対応しません。返信は試験取得で、表示件数が全件とは限りません。保存対象は取得済みの本文・返信だけです。</p><UrlText text={`原文: https://www.v2ex.com/t/${threadId}`} externalOnly /></div>}
       {source === "v2ex" && !publicOnly && nextCursor && <p className="reader-notice">未取得の返信がある場合は下の「続きの投稿を読み込む」で取得できます。本文保存の対象は取得済みの投稿だけです。</p>}
       {remote && <div className="image-consent"><span>{source === "ptt" ? mediaList.length ? `対応画像 ${mediaList.length} 件を検出。読み込み後に画像一覧を表示します。` : "対応画像は0件です。画像のない記事、または未対応の画像URLの可能性があります。" : "外部画像は自動取得しません。対応: Imgur / Postimages / ImgBB / URUSAI"}</span>{!consent ? <button className="ui-btn" disabled={!mediaList.length} onClick={allowImages}>画像を読み込む</button> : <button className="ui-btn" onClick={() => { setConsent(false); setViewer(null); }}>画像の表示を停止</button>}</div>}
-      {source === "ptt" && <details className="ptt-image-help"><summary>画像が表示されないとき</summary><p>本文・コメントから検出した、Imgur / Postimages / ImgBB / URUSAIのHTTPS画像直リンクだけが対象です。共有ページ・アルバム・短縮URL・動画・その他のサイトには対応していません。</p><p>「画像を読み込む」で外部接続に同意すると、一覧に最大12枚ずつ表示します。画像をクリックすると拡大でき、個別・選択・一括保存ができます。削除済み画像や8MiB・1600万画素の上限を超える画像などは取得できません。</p><p>「本文を保存」には画像は含まれません。画像は画像用の保存ボタンから、指定したフォルダへ保存してください。</p></details>}
+      {source === "ptt" && <details className="ptt-image-help"><summary>画像が表示されないとき</summary><p>本文・コメントから検出した、Imgur / Postimages / ImgBB / URUSAIのHTTPS画像直リンクだけが対象です。共有ページ・アルバム・短縮URL・動画・その他のサイトには対応していません。</p><p>「画像を読み込む」で外部接続に同意すると、一覧に最大12枚ずつ表示します。画像をクリックすると拡大でき、個別・選択・一括保存ができます。通常20MBまで、超える画像は個別の警告に同意した場合だけ最大100MBまで取得できます。削除済み画像や1600万画素の上限を超える画像などは取得できません。</p><p>「本文を保存」には画像は含まれません。画像は画像用の保存ボタンから、指定したフォルダへ保存してください。</p></details>}
     </div>
     <div ref={scrollPane} className="list-scroll">
       {viewMode === "thread" ? visiblePosts.map((post, index) => {

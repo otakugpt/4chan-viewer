@@ -255,3 +255,53 @@ test('external links validate destinations and require explicit confirmation', a
   const failing = load('external', { electron: { dialog: { showMessageBox: async () => ({ response: 1 }) }, shell: { openExternal: async () => { throw new Error('private detail'); } } } });
   assert.equal((await failing.confirmExternal('https://example.test')).error.includes('private'), false);
 });
+
+test('large image approval is main-only, default-cancel and invalidated by navigation; cancelled saves never retry', async () => {
+  const handlers = {}; let win, calls = 0, prompts = 0, mode = 'cancel';
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB9sAAAAASUVORK5CYII=', 'base64');
+  const network = load('network');
+  const electron = {
+    app: { setAppUserModelId() {}, isPackaged: true, whenReady: () => Promise.resolve(), on() {} },
+    BrowserWindow: class extends EventEmitter {
+      constructor() {
+        super(); win = this; this.webContents = new EventEmitter();
+        Object.assign(this.webContents, { id: 42, mainFrame: {}, setWindowOpenHandler() {}, isDestroyed: () => false, send() {} });
+      }
+      async loadFile(file) { this.webContents.mainFrame.url = require('node:url').pathToFileURL(file).href; }
+    },
+    ipcMain: { handle: (channel, fn) => { handlers[channel] = fn; } },
+    dialog: {
+      showOpenDialog: async () => ({ canceled: false, filePaths: [os.tmpdir()] }),
+      showMessageBox: async options => {
+        prompts++; assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0);
+        assert.match(options.message, /20MB/); assert.match(options.detail, /100MB/);
+        assert.ok(options.detail.includes('i.urusai.cc'));
+        if (mode === 'navigation') win.webContents.mainFrame.url = 'https://evil.test/';
+        return { response: mode === 'cancel' ? 0 : 1 };
+      },
+    },
+  };
+  load('main', { electron, fs: { ...fs, existsSync: () => true }, './network': {
+    ...network, serialQueue: () => work => work(), getBytes: async (_url, limit) => {
+      calls++; if (limit === 20 * 1024 * 1024) throw network.responseTooLarge(limit, 21 * 1024 * 1024, true, 200);
+      assert.equal(limit, 100 * 1024 * 1024); return { status: 200, headers: { 'content-type': 'image/png' }, body: png };
+    },
+  } });
+  await Promise.resolve();
+  const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
+  const original = event.senderFrame.url, url = 'https://i.urusai.cc/RiftTest.png';
+  assert.match((await handlers['five-image']({ ...event, senderFrame: null }, url)).error, /Unauthorized/);
+  assert.equal(calls, 0); assert.equal(prompts, 0);
+  assert.match((await handlers['five-image'](event, url, true)).error, /キャンセル/);
+  assert.equal(calls, 1); assert.equal(prompts, 1);
+  mode = 'approve';
+  assert.equal((await handlers['five-image'](event, url)).mime, 'image/png');
+  assert.equal(calls, 3); assert.equal(prompts, 2);
+  mode = 'navigation';
+  assert.match((await handlers['five-image'](event, url)).error, /キャンセル/);
+  assert.equal(calls, 4); assert.equal(prompts, 3);
+  event.senderFrame.url = original; mode = 'cancel';
+  const result = await handlers['save-images'](event, [{ source: 'ptt', url }]);
+  assert.equal(result.saved, 0); assert.equal(result.failedTargets.length, 1);
+  assert.equal(calls, 5); assert.equal(prompts, 4);
+});

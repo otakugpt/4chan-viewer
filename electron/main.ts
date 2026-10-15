@@ -4,7 +4,7 @@ import fs from "fs";
 import { pathToFileURL } from "node:url";
 import { downloadImage, isTrustedDocument, normalizeDownloadUrl, translateText } from "./services";
 import { fiveRequest } from "./five";
-import { normalizeFiveImage, imageFilename, readFiveImage, downloadFiveImage } from "./five-media";
+import { normalizeFiveImage, imageFilename, readFiveImage, downloadFiveImage, ImagePolicyError, LargeImageInfo } from "./five-media";
 
 import { confirmExternal } from "./external";
 import { createV2exVault } from "./v2ex-credentials";
@@ -64,10 +64,20 @@ ipcMain.handle("v2ex-settings", (event, request: unknown): V2exCredentialStatus 
   try { return v2exClient().vault.settings(request); }
   catch { return failure("接続設定を読み取れませんでした。"); }
 });
+async function confirmLargeImage(event: Electron.IpcMainInvokeEvent, info: LargeImageInfo): Promise<boolean> {
+  if (event.sender.isDestroyed() || !trustedSender(event)) return false;
+  const size = (info.size / 1024 / 1024).toFixed(2);
+  try {
+    const answer = await dialog.showMessageBox({ type: "warning", title: "大きい画像の取得確認", message: "20MBを超える画像です。取得しますか？",
+      detail: `${info.exact ? "申告サイズ" : "受信サイズ（全体サイズは不明）"}: ${size} MiB${info.exact ? "" : "以上"}\n接続先: ${new URL(info.url).hostname}\n画像: ${new URL(info.url).pathname}\n通信量とメモリ使用量が増えます。この画像を最初から再取得します。今回の取得だけを許可し、保存・再表示時は改めて確認します。\n通常20MB、確認後も最大100MB（1MB = 1MiB）。画素数・形式・接続先の安全確認は解除しません。`,
+      buttons: ["キャンセル", "この画像を取得"], defaultId: 0, cancelId: 0, noLink: true });
+    return answer.response === 1 && !event.sender.isDestroyed() && trustedSender(event);
+  } catch { return false; }
+}
 ipcMain.handle("five-image", async (event, url: unknown): Promise<RemoteImageResult> => {
   if (!trustedSender(event)) return { error: "Unauthorized request" };
-  try { return await readFiveImage(url); }
-  catch { return { error: "画像を取得できません。対応ホスト・形式・8MB以内の画像か確認してください。" }; }
+  try { return await readFiveImage(url, info => confirmLargeImage(event, info)); }
+  catch (error) { return { error: error instanceof ImagePolicyError ? error.message : "画像を取得できません。対応ホスト・形式・容量・画素数・通信状態を確認してください。" }; }
 });
 
 
@@ -218,11 +228,14 @@ ipcMain.handle("save-images", async (event, input: unknown): Promise<SaveResult>
         const filePath = await resolveUniqueFilePath(path.join(filePaths[0], filename));
         for (let attempt = 1; attempt <= DOWNLOAD_RETRY_COUNT; attempt++) {
           try {
-            if (remoteImageSource(item.source)) await downloadFiveImage(item.url, filePath);
+            if (remoteImageSource(item.source)) await downloadFiveImage(item.url, filePath, info => confirmLargeImage(event, info));
             else await downloadImage(item.url, filePath);
             complete = true; break;
           }
-          catch { if (attempt < DOWNLOAD_RETRY_COUNT) await sleep(1200 * attempt); }
+          catch (error) {
+            if (error instanceof ImagePolicyError) break;
+            if (attempt < DOWNLOAD_RETRY_COUNT) await sleep(1200 * attempt);
+          }
         }
       } catch { /* A single file failure must not discard the rest of the batch. */ }
       if (complete) saved++; else failedTargets.push(item);
