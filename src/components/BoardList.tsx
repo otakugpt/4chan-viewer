@@ -5,6 +5,7 @@ import { rememberBoards, useLibrary, toggleFavorite } from "../lib/library";
 import { providers } from "../lib/providers";
 import { requireReadyPage, PageAccessError } from "../lib/pages";
 import { PttAgeNotice } from "./PttAccess";
+import { LainAgeNotice } from "./ImageboardAccess";
 import { validPttBoard } from "../../electron/ptt-url";
 
 interface BoardListProps {
@@ -96,7 +97,7 @@ export const BoardList: React.FC<BoardListProps> = ({
           </div>
         )}
 
-        {!loading && error && <div className="error-state" role="alert">{source === "ptt" && ageRequired ? <PttAgeNotice /> : <>{error}<button className="ui-btn" onClick={() => setReload(value => value + 1)}>再試行</button></>}</div>}
+        {!loading && error && <div className="error-state" role="alert">{source === "ptt" && ageRequired ? <PttAgeNotice /> : source === "lainchan" && ageRequired ? <LainAgeNotice /> : <>{error}<button className="ui-btn" onClick={() => setReload(value => value + 1)}>再試行</button></>}</div>}
 
         {!loading &&
           !error &&

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { isImageboardSource } from "../lib/sources";
 import { plainText } from "../lib/text";
 import { rememberTitles, useLibrary, toggleFavorite } from "../lib/library";
 import { TranslateButton } from "./TranslateButton";
@@ -6,6 +7,7 @@ import { TranslateButton } from "./TranslateButton";
 import { providers } from "../lib/providers";
 import { requireReadyPage, mergePage, PageAccessError } from "../lib/pages";
 import { PttAgeNotice } from "./PttAccess";
+import { LainAgeNotice } from "./ImageboardAccess";
 
 interface ThreadListProps {
   source: BoardSource;
@@ -96,7 +98,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           </div>
         )}
 
-        {!loading && error && <div className="error-state" role="alert">{source === "ptt" && ageRequired ? <PttAgeNotice /> : <>Error: {error}</>}</div>}
+        {!loading && error && <div className="error-state" role="alert">{source === "ptt" && ageRequired ? <PttAgeNotice /> : source === "lainchan" && ageRequired ? <LainAgeNotice /> : <>Error: {error}</>}</div>}
 
         {!loading &&
           !error &&
@@ -136,7 +138,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                         (e.target as HTMLImageElement).style.display = "none";
                       }}
                     />
-                  ) : source === "v2ex" || source === "ptt" ? null : (
+                  ) : source === "v2ex" || source === "ptt" || isImageboardSource(source) ? null : (
                     <div className="thread-thumb thread-thumb--empty">No image</div>
                   )}
 

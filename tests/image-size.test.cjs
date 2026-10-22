@@ -20,6 +20,8 @@ test('network reports header and streamed size limits, accepting exactly the bou
     { length: '11', chunks: [], exact: true, size: 11 },
     { chunks: [Buffer.alloc(6), Buffer.alloc(5)], exact: false, size: 11 },
     { length: '2', chunks: [Buffer.alloc(6), Buffer.alloc(5)], exact: false, size: 11 },
+    { status: 429, length: '11', chunks: [], exact: true, size: 11, retry: '7200' },
+    { status: 403, chunks: [Buffer.alloc(11)], exact: false, size: 11, retry: '7200' },
   ]) {
     let destroyed = false;
     const network = load('network', {
@@ -29,8 +31,8 @@ test('network reports header and streamed size limits, accepting exactly the bou
         const req = new EventEmitter();
         queueMicrotask(() => {
           const response = new EventEmitter();
-          response.statusCode = 200;
-          response.headers = scenario.length ? { 'content-length': scenario.length } : {};
+          response.statusCode = scenario.status ?? 200;
+          response.headers = { ...(scenario.length ? { 'content-length': scenario.length } : {}), ...(scenario.retry ? { 'retry-after': scenario.retry } : {}) };
           response.destroy = error => { destroyed = true; if (error) queueMicrotask(() => response.emit('error', error)); };
           callback(response);
           for (const chunk of scenario.chunks) { if (destroyed) break; response.emit('data', chunk); }
@@ -42,11 +44,56 @@ test('network reports header and streamed size limits, accepting exactly the bou
     if (scenario.succeeds) assert.equal((await network.getBytes(url, 10)).body.length, 10);
     else await assert.rejects(network.getBytes(url, 10), error => {
       assert.equal(error.code, 'RESPONSE_TOO_LARGE'); assert.equal(error.limit, 10);
-      assert.equal(error.status, 200); assert.equal(error.exact, scenario.exact); assert.equal(error.size, scenario.size);
+      assert.equal(error.status, scenario.status ?? 200); assert.equal(error.exact, scenario.exact); assert.equal(error.size, scenario.size);
+      if (scenario.retry) assert.equal(error.headers['retry-after'], scenario.retry);
       return true;
     });
     assert.equal(destroyed, !scenario.succeeds);
   }
+});
+
+test('network preserves restriction headers on encoding and interrupted-body failures', async () => {
+  for (const kind of ['encoding', 'stream', 'request']) {
+    let calls = 0;
+    const network = load('network', {
+      'node:dns/promises': { lookup: async () => [{ address: '1.1.1.1', family: 4 }] },
+      'node:https': { get: (_url, _options, callback) => {
+        calls++; const req = new EventEmitter();
+        queueMicrotask(() => {
+          const response = new EventEmitter(); response.statusCode = 429;
+          response.headers = { 'retry-after': '7200', ...(kind === 'encoding' ? { 'content-encoding': 'gzip' } : {}) };
+          response.destroy = () => {};
+          callback(response);
+          if (kind !== 'encoding') (kind === 'stream' ? response : req).emit('error', new Error('interrupted'));
+        });
+        return req;
+      } },
+    });
+    await assert.rejects(network.getBytes(url, 10), error => error.status === 429 && error.headers['retry-after'] === '7200');
+    const { createImageboardService } = load('imageboards');
+    const service = createImageboardService({ request: network.getBytes, spacing: 0 });
+    const input = { source: '2333chan', kind: 'threads', board: 'ayu' };
+    assert.ok((await service.request(input)).error);
+    assert.ok((await service.request(input)).error);
+    assert.equal(calls, 2, 'second service request must be stopped by cooldown');
+  }
+});
+
+test('network rejects cancelled requests before DNS and aborts active sockets', async () => {
+  let calls = 0, received;
+  const network = load('network', {
+    'node:dns/promises': { lookup: async () => [{ address: '1.1.1.1', family: 4 }] },
+    'node:https': { get: (_url, options) => {
+      calls++; received = options.signal; const req = new EventEmitter();
+      options.signal.addEventListener('abort', () => req.emit('error', new Error('aborted')), { once: true });
+      return req;
+    } },
+  });
+  const cancelled = new AbortController(); cancelled.abort();
+  await assert.rejects(network.getBytes(url, 10, {}, cancelled.signal)); assert.equal(calls, 0);
+  const active = new AbortController(); const result = network.getBytes(url, 10, {}, active.signal);
+  await new Promise(resolve => setImmediate(resolve));
+  active.abort(); await assert.rejects(result); assert.equal(received.aborted, true); assert.equal(calls, 1);
 });
 
 test('ordinary images use 20 MiB without prompting; large image approval permits one bounded retry', async () => {

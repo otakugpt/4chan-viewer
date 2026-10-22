@@ -10,10 +10,10 @@ const pttId = 'M.1789176238.A.A3E';
 const oldSite = { version: 2, boards: ['g'], threads: ['g/123'], history: { 'g/123': 1000 }, reads: { 'g/123': { post: 125, scroll: 600, updated: 1001 } }, metadata: { 'g/123': { title: 'Keep me', added: 900 } }, last: { board: 'g', thread: 123 } };
 const oldLibrary = JSON.stringify({ version: 2, currentSource: '4chan', sites: { '4chan': oldSite }, historyEnabled: false, boardOrder: ['4chan/g'] });
 
-test('source registry exposes the four implemented providers', () => {
+test('source registry exposes the seven implemented providers', () => {
   const { enabledSources, SOURCE_IDS } = load('src/lib/sources.ts');
-  assert.deepEqual(plain(enabledSources), ['4chan', '5ch', 'v2ex', 'ptt']);
-  assert.deepEqual(plain(SOURCE_IDS), ['4chan', '5ch', 'v2ex', 'ptt']);
+  assert.deepEqual(plain(enabledSources), ['4chan', '5ch', 'v2ex', 'ptt', '2333chan', 'komica', 'lainchan']);
+  assert.deepEqual(plain(SOURCE_IDS), ['4chan', '5ch', 'v2ex', 'ptt', '2333chan', 'komica', 'lainchan']);
 });
 
 test('identities support PTT filenames without loosening existing site validation', () => {

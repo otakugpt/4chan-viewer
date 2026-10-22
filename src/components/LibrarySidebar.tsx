@@ -3,12 +3,15 @@ import { BoardList } from "./BoardList";
 import { boardName, favoriteBoards, moveBoard, toggleFavorite, useLibraries } from "../lib/library";
 import { useSavedThreads } from "../lib/savedThreads";
 import { enabledSources } from "../lib/sources";
+import { ImageboardGate } from "./ImageboardAccess";
+import { useImageboardAccess } from "../lib/imageboardAccess";
 export type LibraryMode = "favorites" | "history" | "board" | "saved";
 export function LibrarySidebar({ source, selectedBoard, mode, onMode, onBoard }: {
   source: BoardSource; selectedBoard: string | null; mode: LibraryMode;
   onMode: (mode: LibraryMode) => void; onBoard: (source: BoardSource, board: string) => void;
 }) {
   const data = useLibraries();
+  const { accepted } = useImageboardAccess();
   const saved = useSavedThreads();
   const [expanded, setExpanded] = useState(true);
   const boards = favoriteBoards();
@@ -27,7 +30,7 @@ export function LibrarySidebar({ source, selectedBoard, mode, onMode, onBoard }:
         {!boards.length && <p className="library-hint">下の板一覧で「登録」すると、ここからすぐ開けます。</p>}
         {boards.map((id, index) => {
           const [site, board] = id.split('/') as [BoardSource, string];
-          const name = boardName(site, board);
+          const name = site === "lainchan" && !accepted ? board : boardName(site, board);
           return <div className="library-board-row" key={id}>
             <button title={name + " / " + site + " /" + board + "/"} className="library-board-link" aria-current={mode === 'board' && source === site && selectedBoard === board ? 'page' : undefined} onClick={() => onBoard(site, board)}><span>{name}</span><small>{site}</small></button>
             <div className="library-board-tools">
@@ -40,7 +43,7 @@ export function LibrarySidebar({ source, selectedBoard, mode, onMode, onBoard }:
       </section>
       <details className="all-boards" open={expanded} onToggle={e => setExpanded(e.currentTarget.open)}>
         <summary>{source === "ptt" ? "人気の板" : "すべての板"} <span>{source}</span></summary>
-        {expanded && <BoardList key={source} source={source} selectedBoard={selectedBoard} onSelect={board => onBoard(source, board)} />}
+        {expanded && <ImageboardGate source={source}><BoardList key={source} source={source} selectedBoard={selectedBoard} onSelect={board => onBoard(source, board)} /></ImageboardGate>}
       </details>
     </div>
   </aside>;

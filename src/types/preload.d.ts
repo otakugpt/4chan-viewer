@@ -13,6 +13,10 @@ declare global {
     v2exSettings: (request: V2exSettingsRequest) => Promise<V2exCredentialStatus>;
     pttRequest: (request: PttRequest) => Promise<PttResult>;
     pttConsent: (request: PttConsentRequest) => Promise<PttConsentStatus>;
+    imageboardRequest: (request: ImageboardRequest) => Promise<ImageboardResult>;
+    imageboardConsent: (request: ImageboardConsentRequest) => Promise<ImageboardConsentStatus>;
+    imageboardImage: (request: { id: string; url: string }) => Promise<RemoteImageResult>;
+    cancelImageboardImage: (id: string) => Promise<void>;
     fiveImage: (url: string) => Promise<RemoteImageResult>;
     translate: (text: string) => Promise<{ translatedText: string } | { error: string }>;
     saveImages: (list: ImageTarget[]) => Promise<SaveResult>;

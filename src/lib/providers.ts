@@ -1,5 +1,6 @@
 import { normalizeThreadId, validBoard } from "./sources";
 import { readyPage, PageAccessError } from "./pages";
+import { getImageboardAccess, lockImageboardAccess } from "./imageboardAccess";
 export interface Provider {
   source: BoardSource;
   capabilities: { archive: boolean; translation: boolean; remoteImages: boolean; references: boolean; threadPages: boolean; postPages: boolean; ageConfirmation: boolean };
@@ -61,7 +62,46 @@ async function ptt(request: PttRequest, signal: AbortSignal) {
   if ("error" in result) throw result.accessDenied ? new PageAccessError("unavailable", result.error) : new Error(result.error);
   return result;
 }
+function imageboardProvider(source: ImageboardSource): Provider {
+  const request = async (input: ImageboardRequest, signal: AbortSignal) => {
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    const access = getImageboardAccess();
+    if (source === "lainchan" && !access.accepted) throw new PageAccessError("age-confirmation-required");
+    if (!window.electron?.imageboardRequest) throw new Error("このサイトはElectronアプリで利用できます。");
+    const result = await window.electron.imageboardRequest(input);
+    if (signal.aborted || (source === "lainchan" && access.revision !== getImageboardAccess().revision)) throw new DOMException("Aborted", "AbortError");
+    if ("status" in result) {
+      if (source === "lainchan") lockImageboardAccess();
+      throw new PageAccessError("age-confirmation-required");
+    }
+    if ("error" in result) throw result.accessDenied ? new PageAccessError("unavailable", result.error) : new Error(result.error);
+    return result;
+  };
+  const validate = (board: string, thread?: ThreadId, cursor?: string) => {
+    if (!validBoard(source, board) || (thread !== undefined && normalizeThreadId(source, thread) === null) ||
+      (cursor !== undefined && (typeof cursor !== "string" || !cursor.length || cursor.length > 256 || /[\u0000-\u0020]/.test(cursor)))) throw new Error("Invalid provider destination");
+  };
+  return {
+    source, capabilities: { archive: false, translation: false, remoteImages: true, references: false, threadPages: true, postPages: false, ageConfirmation: source === "lainchan" },
+    boards: async signal => { const result = await request({ source, kind: "boards" }, signal); if ("boards" in result) return readyPage(result.boards); throw new Error("Invalid response"); },
+    threads: async (board, signal, cursor) => {
+      validate(board, undefined, cursor);
+      const result = await request({ source, kind: "threads", board, cursor }, signal);
+      if ("threads" in result) return readyPage(result.threads, result.nextCursor); throw new Error("Invalid response");
+    },
+    posts: async (board, thread, signal, cursor) => {
+      validate(board, thread, cursor);
+      if (cursor !== undefined) throw new Error("Post pagination is not supported");
+      const result = await request({ source, kind: "posts", board, thread }, signal);
+      if ("posts" in result) return readyPage(result.posts); throw new Error("Invalid response");
+    },
+    thumbnail: () => null,
+  };
+}
 export const providers: Record<BoardSource, Provider> = {
+  "2333chan": imageboardProvider("2333chan"),
+  komica: imageboardProvider("komica"),
+  lainchan: imageboardProvider("lainchan"),
   "4chan": {
     source: "4chan", capabilities: { archive: true, translation: true, remoteImages: false, references: false, threadPages: false, postPages: false, ageConfirmation: false },
     boards: async signal => readyPage((await json("/boards.json", signal)).boards),

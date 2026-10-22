@@ -1,10 +1,14 @@
-export const SOURCE_IDS: readonly BoardSource[] = ["4chan", "5ch", "v2ex", "ptt"];
+export const SOURCE_IDS: readonly BoardSource[] = ["4chan", "5ch", "v2ex", "ptt", "2333chan", "komica", "lainchan"];
 export const sources: Record<BoardSource, { label: string; enabled: boolean }> = {
   "4chan": { label: "4chan", enabled: true },
   "5ch": { label: "5ch", enabled: true },
   v2ex: { label: "V2EX", enabled: true },
   ptt: { label: "PTT", enabled: true },
+  "2333chan": { label: "2333chan", enabled: true },
+  komica: { label: "Komica", enabled: true },
+  lainchan: { label: "Lainchan", enabled: true },
 };
+export const isImageboardSource = (value: unknown): value is ImageboardSource => value === "2333chan" || value === "komica" || value === "lainchan";
 export const enabledSources = SOURCE_IDS.filter(source => sources[source].enabled);
 export const isSource = (value: unknown): value is BoardSource => typeof value === "string" && SOURCE_IDS.includes(value as BoardSource);
 const reserved = new Set(["__proto__", "prototype", "constructor"]);

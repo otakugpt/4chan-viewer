@@ -13,10 +13,11 @@ export function responseTooLarge(limit: number, size: number, exact: boolean, st
 }
 
 // Resolve once, reject private networks, then pin the socket to the checked address.
-export async function getBytes(raw: string, limit: number, headers: Record<string, string> = {}): Promise<ByteResponse> {
+export async function getBytes(raw: string, limit: number, headers: Record<string, string> = {}, cancel?: AbortSignal): Promise<ByteResponse> {
   const url = new URL(raw);
   if (url.protocol !== "https:" || url.username || url.password || url.port) throw new Error("Invalid destination");
-  const signal = AbortSignal.timeout(20_000);
+  const signal = cancel ? AbortSignal.any([cancel, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000);
+  if (signal.aborted) throw new Error("Request aborted");
   const addresses = await new Promise<Awaited<ReturnType<typeof dns.lookup>>[]>((resolve, reject) => {
     const abort = () => reject(new Error("DNS timeout"));
     signal.addEventListener("abort", abort, { once: true });
@@ -25,6 +26,11 @@ export async function getBytes(raw: string, limit: number, headers: Record<strin
   if (!addresses.length || addresses.some(a => !isPublicIPv4(a.address))) throw new Error("Private destination rejected");
   const address = addresses[0].address;
   return new Promise((resolve, reject) => {
+    let receivedStatus: number | undefined;
+    let receivedHeaders: ByteResponse["headers"] | undefined;
+    // Preserve server restrictions even if decoding, cancellation or the body stream fails.
+    const responseError = (error: Error) => Object.assign(error,
+      receivedStatus === undefined ? {} : { status: receivedStatus, headers: receivedHeaders });
     const req = https.get(url, {
       signal, family: 4, agent: false,
       lookup: (_host, options, callback) => {
@@ -33,25 +39,27 @@ export async function getBytes(raw: string, limit: number, headers: Record<strin
       },
       headers: { "User-Agent": "RIFT/1.0 (read-only BBS viewer)", "Accept-Encoding": "identity", ...headers },
     }, response => {
+      receivedStatus = response.statusCode;
+      receivedHeaders = response.headers;
       if ((response.statusCode ?? 0) >= 300 && (response.statusCode ?? 0) < 400 && response.statusCode !== 304) {
         response.destroy(); reject(Object.assign(new Error("Redirect rejected"), { code: "REDIRECT", location: response.headers.location?.slice(0, 2048) })); return;
       }
       if (response.headers["content-encoding"] && response.headers["content-encoding"] !== "identity") {
-        response.destroy(); reject(new Error("Unexpected encoding")); return;
+        response.destroy(); reject(responseError(new Error("Unexpected encoding"))); return;
       }
       const length = Number(response.headers["content-length"] ?? 0);
-      if (length > limit) { response.destroy(); reject(responseTooLarge(limit, length, true, response.statusCode ?? 0)); return; }
+      if (length > limit) { response.destroy(); reject(Object.assign(responseTooLarge(limit, length, true, response.statusCode ?? 0), { headers: response.headers })); return; }
       const chunks: Buffer[] = [];
       let size = 0;
       response.on("data", (chunk: Buffer) => {
         size += chunk.length;
-        if (size > limit) { response.destroy(responseTooLarge(limit, size, false, response.statusCode ?? 0)); return; }
+        if (size > limit) { response.destroy(Object.assign(responseTooLarge(limit, size, false, response.statusCode ?? 0), { headers: response.headers })); return; }
         chunks.push(chunk);
       });
-      response.on("error", reject);
+      response.on("error", error => reject(responseError(error)));
       response.on("end", () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks) }));
     });
-    req.on("error", reject);
+    req.on("error", error => reject(responseError(error)));
   });
 }
 

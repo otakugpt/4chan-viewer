@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from "react";
 import { boardName, deleteHistory, setHistoryEnabled, toggleFavorite, useLibraries } from "../lib/library";
 import { enabledSources, sources } from "../lib/sources";
+import { useImageboardAccess } from "../lib/imageboardAccess";
 export function LibraryList({ mode, onSelect, active }: { mode: 'favorites' | 'history'; onSelect: (source: BoardSource, board: string, thread: ThreadId) => void; active: string }) {
   const data = useLibraries();
+  const { accepted } = useImageboardAccess();
   const [query, setQuery] = useState('');
   const [site, setSite] = useState<BoardSource | 'all'>('all');
   const [sort, setSort] = useState('recent');
@@ -10,11 +12,12 @@ export function LibraryList({ mode, onSelect, active }: { mode: 'favorites' | 'h
     const library = data.sites[source];
     return (mode === 'favorites' ? library.threads : Object.keys(library.history)).map((key, order) => {
       const [board, id] = key.split('/');
-      return { source, key, board, thread: id, title: library.metadata[key]?.title || `/${board}/ No.${id}`, boardName: boardName(source, board),
+      const locked = source === "lainchan" && !accepted;
+      return { source, key, board, thread: id, title: locked ? "Lainchan / 年齢・利用条件の確認が必要です" : library.metadata[key]?.title || `/${board}/ No.${id}`, boardName: locked ? board : boardName(source, board),
         visited: library.history[key] ?? 0, added: library.metadata[key]?.added ?? 0, order, favorite: library.threads.includes(key), reading: library.reads[key] };
     });
   }).filter(row => (site === 'all' || row.source === site) && `${row.title} ${row.boardName} ${row.board} ${row.thread}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
-    .sort((a, b) => (mode === 'favorites' && sort === 'added' ? b.added - a.added : b.visited - a.visited) || a.order - b.order), [data, mode, query, site, sort]);
+    .sort((a, b) => (mode === 'favorites' && sort === 'added' ? b.added - a.added : b.visited - a.visited) || a.order - b.order), [data, mode, query, site, sort, accepted]);
   const dayLabel = (timestamp: number) => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
@@ -43,7 +46,7 @@ export function LibraryList({ mode, onSelect, active }: { mode: 'favorites' | 'h
           <button className="saved-thread-open" onClick={() => onSelect(row.source, row.board, row.thread)}><strong>{row.title}</strong><span>{row.source} / {row.boardName}</span><small>{row.visited ? '最終閲覧 ' + new Date(row.visited).toLocaleString('ja-JP') : 'まだ閲覧記録がありません'}</small></button>
           <div className="saved-thread-actions">
             <button className="ui-btn" onClick={() => onSelect(row.source, row.board, row.thread)}>{row.reading ? '続きから' : '開く'}</button>
-            <button className="ui-btn" aria-pressed={row.favorite} onClick={() => toggleFavorite('threads', row.key, row.source, row.title)}>{row.favorite ? 'お気に入り解除' : 'お気に入り'}</button>
+            <button className="ui-btn" aria-pressed={row.favorite} onClick={() => toggleFavorite('threads', row.key, row.source, row.source === "lainchan" && !accepted ? data.sites[row.source].metadata[row.key]?.title : row.title)}>{row.favorite ? 'お気に入り解除' : 'お気に入り'}</button>
             {mode === 'history' && <button className="ui-btn" aria-label={row.title + ' を履歴から削除'} onClick={() => deleteHistory(row.source, row.key)}>履歴削除</button>}
           </div>
         </article>

@@ -4,6 +4,7 @@ import { MediaViewer, MediaItem } from "./MediaViewer";
 import { RemoteImage } from "./RemoteImage";
 import { UrlText } from "./UrlText";
 import { PttAgeNotice } from "./PttAccess";
+import { LainAgeNotice } from "./ImageboardAccess";
 import { saveThread } from "../lib/savedThreads";
 import { ReplyText } from "./ReplyText";
 import { TranslateButton } from "./TranslateButton";
@@ -11,11 +12,14 @@ import { providers, imageBase } from "../lib/providers";
 import { requireReadyPage, mergePage, PageAccessError } from "../lib/pages";
 import { readBoundary } from "../lib/reading";
 import { plainText } from "../lib/text";
+import { isImageboardSource, sources } from "../lib/sources";
+import { imageboardThumbnail, IMAGEBOARD_SAVE_LIMIT } from "../lib/imageboardMedia";
 import { recordVisit, getHistoryEpoch, getLibrary, getClearEpoch, rememberReading, toggleFavorite, useLibrary, setFilters } from "../lib/library";
 
 type Media = MediaItem;
 export function ThreadView({ source, board, threadId }: { source: BoardSource; board: string; threadId: ThreadId }) {
   const provider = providers[source];
+  const imageboard = isImageboardSource(source);
   const [posts, setPosts] = useState<PostInfo[]>([]);
   const currentPosts = useRef<PostInfo[]>([]);
   const [savingText, setSavingText] = useState(false);
@@ -100,7 +104,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
       if (provider.capabilities.remoteImages) {
         if (provider.capabilities.references && ((!showHidden && ((post.id && library.filters.ids.includes(post.id)) || library.filters.words.some(word => plainText(post.com ?? "").includes(word)))) || (selectedId && post.id !== selectedId))) continue;
         for (const url of post.media ?? []) if (!seen.has(url) && result.length < 2000) {
-          seen.add(url); result.push({ postId: post.postId, postNo: post.no, full: url, thumb: url, filename: new URL(url).pathname.split("/").pop()!, remote: true, target: { source, url } });
+          seen.add(url); result.push({ postId: post.postId, postNo: post.no, full: url, thumb: isImageboardSource(source) ? imageboardThumbnail(source, url, post.mediaThumbs) : url, filename: new URL(url).pathname.split("/").pop()!, remote: true, target: { source, url } });
         }
       } else if (post.tim && post.ext) {
         const filename = `${post.tim}${post.ext}`;
@@ -111,11 +115,13 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
   }, [posts, provider, source, board, library.filters, selectedId, showHidden]);
   useEffect(() => { setViewer(null); setPage(0); }, [library.filters, selectedId, showHidden]);
   const remote = provider.capabilities.remoteImages && !publicOnly;
-  const pageSize = remote ? 12 : mediaList.length || 1;
+  const pageSize = remote ? imageboard ? 6 : 12 : mediaList.length || 1;
   const pageIndex = Math.min(page, Math.max(0, Math.ceil(mediaList.length / pageSize) - 1));
   const currentMedia = mediaList.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+  const imageHosts = imageboard ? sources[source].label + "の許可された画像ホスト" : "Imgur / Postimages / ImgBB / URUSAI";
+  const selectedCount = mediaList.filter(m => selected.has(m.full)).length;
   const allowImages = () => {
-    if (!mediaList.length || !window.confirm("外部画像ホストに接続するとIPアドレス等が相手に伝わります。対応画像（Imgur / Postimages / ImgBB / URUSAI、通常20MB、超える画像は個別確認・最大100MB）を読み込みますか？")) return false;
+    if (!mediaList.length || !window.confirm(`外部画像ホストに接続するとIPアドレス等が相手に伝わります。対応画像（${imageHosts}、通常20MB、超える画像は個別確認・最大100MB）を読み込みますか？${imageboard ? " 一覧はサムネイルのみ、拡大時に原寸画像を取得します。" : ""}`)) return false;
     setConsent(true);
     setViewMode("gallery");
     return true;
@@ -170,9 +176,9 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
     } catch (e) { setNotice(e instanceof Error ? e.message : "本文を保存できませんでした。"); }
     finally { setSavingText(false); }
   };
-  const save = (media: Media[]) => { if (!remote || consent) void saveMedia(media.map(m => m.target)); };
+  const save = (media: Media[]) => { if (imageboard && media.length > IMAGEBOARD_SAVE_LIMIT) { setNotice("画像保存は1回100件までです。100件以下を選択してください。"); return; } if (!remote || consent) void saveMedia(media.map(m => m.target)); };
   if (loading) return <div className="panel-surface pane-flex"><div className="load-state">Loading thread...</div></div>;
-  if (error) return <div className="panel-surface pane-flex"><div className="error-state" role="alert">{source === "ptt" && ageRequired ? <PttAgeNotice /> : <>{error}<button className="ui-btn" disabled={refreshing} onClick={() => refresh()}>再試行</button>{notice && <p>{notice}</p>}</>}</div></div>;
+  if (error) return <div className="panel-surface pane-flex"><div className="error-state" role="alert">{source === "ptt" && ageRequired ? <PttAgeNotice /> : source === "lainchan" && ageRequired ? <LainAgeNotice /> : <>{error}<button className="ui-btn" disabled={refreshing} onClick={() => refresh()}>再試行</button>{notice && <p>{notice}</p>}</>}</div></div>;
 
   return <div className="panel-surface pane-flex">
     <div className="panel-header">
@@ -183,7 +189,7 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
           {(source === "4chan" || remote) && <button className={`ui-btn ${viewMode === "gallery" ? "ui-btn--active" : ""}`} onClick={() => setViewMode("gallery")}>{source === "ptt" ? `画像一覧 (${mediaList.length})` : "Gallery"}</button>}
           <button className="ui-btn" disabled={refreshing} onClick={() => refresh()}>更新</button>
           <button className="ui-btn save-thread-text" disabled={savingText || refreshing} onClick={() => void saveText()}>{savingText ? "本文保存中…" : "本文を保存"}</button>
-          {(source === "4chan" || remote) && <button className="ui-btn ui-btn--primary" disabled={busy || !mediaList.length || (remote && !consent)} onClick={() => save(mediaList)}>{busy ? "保存中…" : source === "ptt" ? "画像をすべて保存" : "Save all"}</button>}
+          {(source === "4chan" || remote) && <button className="ui-btn ui-btn--primary" disabled={busy || !mediaList.length || (remote && !consent) || (imageboard && mediaList.length > IMAGEBOARD_SAVE_LIMIT)} onClick={() => save(mediaList)}>{busy ? "保存中…" : source === "ptt" ? "画像をすべて保存" : "Save all"}</button>}
         </div>
       </div>
       {provider.capabilities.references && <details className="reader-options"><summary>閲覧設定・非表示設定</summary>
@@ -198,7 +204,8 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
       {notice && <p className="reader-notice" role="status">{notice}</p>}
       {publicOnly && <div className="reader-notice"><p>公式フィードで公開された本文です。本文が省略される場合があります。画像取得・過去ページには対応しません。返信は試験取得で、表示件数が全件とは限りません。保存対象は取得済みの本文・返信だけです。</p><UrlText text={`原文: https://www.v2ex.com/t/${threadId}`} externalOnly /></div>}
       {source === "v2ex" && !publicOnly && nextCursor && <p className="reader-notice">未取得の返信がある場合は下の「続きの投稿を読み込む」で取得できます。本文保存の対象は取得済みの投稿だけです。</p>}
-      {remote && <div className="image-consent"><span>{source === "ptt" ? mediaList.length ? `対応画像 ${mediaList.length} 件を検出。読み込み後に画像一覧を表示します。` : "対応画像は0件です。画像のない記事、または未対応の画像URLの可能性があります。" : "外部画像は自動取得しません。対応: Imgur / Postimages / ImgBB / URUSAI"}</span>{!consent ? <button className="ui-btn" disabled={!mediaList.length} onClick={allowImages}>画像を読み込む</button> : <button className="ui-btn" onClick={() => { setConsent(false); setViewer(null); }}>画像の表示を停止</button>}</div>}
+      {remote && <div className="image-consent"><span>{source === "ptt" ? mediaList.length ? `対応画像 ${mediaList.length} 件を検出。読み込み後に画像一覧を表示します。` : "対応画像は0件です。画像のない記事、または未対応の画像URLの可能性があります。" : `外部画像は自動取得しません。対応: ${imageHosts}`}</span>{!consent ? <button className="ui-btn" disabled={!mediaList.length} onClick={allowImages}>画像を読み込む</button> : <button className="ui-btn" onClick={() => { setConsent(false); setViewer(null); }}>画像の表示を停止</button>}</div>}
+      {imageboard && <p className="reader-notice">画像保存は1回100件まで。100件を超える場合は選択して保存してください。一覧はサムネイルのみ（最大6件）、サムネイルのない画像は拡大時に取得します。画像も最低{source === "lainchan" ? "10" : "5"}秒間隔のため、表示には時間がかかります。再試行は手動のみです。</p>}
       {source === "ptt" && <details className="ptt-image-help"><summary>画像が表示されないとき</summary><p>本文・コメントから検出した、Imgur / Postimages / ImgBB / URUSAIのHTTPS画像直リンクだけが対象です。共有ページ・アルバム・短縮URL・動画・その他のサイトには対応していません。</p><p>「画像を読み込む」で外部接続に同意すると、一覧に最大12枚ずつ表示します。画像をクリックすると拡大でき、個別・選択・一括保存ができます。通常20MBまで、超える画像は個別の警告に同意した場合だけ最大100MBまで取得できます。削除済み画像や1600万画素の上限を超える画像などは取得できません。</p><p>「本文を保存」には画像は含まれません。画像は画像用の保存ボタンから、指定したフォルダへ保存してください。</p></details>}
     </div>
     <div ref={scrollPane} className="list-scroll">
@@ -214,21 +221,22 @@ export function ThreadView({ source, board, threadId }: { source: BoardSource; b
             <div className="flex gap-2"><button className="ui-btn ui-btn--primary ui-btn--small" disabled={busy} onClick={() => save([media])}>Save image</button><a className="ui-btn" href={media.full} target="_blank" rel="noopener noreferrer">Open full</a></div>
           </div>}
           <div className={`post-body mt-3 whitespace-pre-wrap text-sm leading-relaxed ${aa ? "aa-body" : ""}`}>{provider.capabilities.references ? <ReplyText text={text} posts={visiblePosts} onJump={jump} /> : <UrlText text={text || "(no comment)"} />}</div>
+          {post.spoiler && <p className="library-hint">非表示指定の添付画像は取得しません。</p>}
           {remote && (post.media?.length ?? 0) > 0 && <button className="ui-btn mt-2 post-media-open" onClick={() => {
-            if (source === "ptt" && !consent && !allowImages()) return;
+            if ((source === "ptt" || imageboard) && !consent && !allowImages()) return;
             setViewMode("gallery");
             const firstImage = mediaList.findIndex(m => post.media!.includes(m.full));
             setPage(Math.floor(Math.max(0, firstImage) / pageSize));
-          }}>画像 {post.media!.length} 件を{source === "ptt" && !consent ? "読み込んで表示" : "一覧で見る"}</button>}
+          }}>画像 {post.media!.length} 件を{(source === "ptt" || imageboard) && !consent ? "読み込んで表示" : "一覧で見る"}</button>}
           {provider.capabilities.translation && post.com && <TranslateButton text={text} confirmSend={source === "v2ex" || source === "ptt"} className="mt-3" />}
         </article>;
       }) : <>
-        <div className="gallery-tools"><button className="ui-btn" disabled={busy || (remote && !consent) || !mediaList.some(m => selected.has(m.full))} onClick={() => save(mediaList.filter(m => selected.has(m.full)))}>選択した画像を保存</button><span>{mediaList.filter(m => selected.has(m.full)).length} 件選択</span></div>
+        <div className="gallery-tools"><button className="ui-btn" disabled={busy || (remote && !consent) || !mediaList.some(m => selected.has(m.full)) || (imageboard && selectedCount > IMAGEBOARD_SAVE_LIMIT)} onClick={() => save(mediaList.filter(m => selected.has(m.full)))}>選択した画像を保存</button><span>{mediaList.filter(m => selected.has(m.full)).length} 件選択</span></div>
         <div className="gallery-grid">{currentMedia.map((media, index) => <div className="gallery-card" key={media.full}>
           <div className="gallery-link" role="button" tabIndex={0} aria-label={`投稿 ${media.postNo} の画像を拡大`} onClick={() => { if (!remote || consent) setViewer(pageIndex * pageSize + index); }} onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); if (!remote || consent) setViewer(pageIndex * pageSize + index); } }}>
-            {remote ? consent ? <RemoteImage url={media.full} alt={`post-${media.postNo}`} className="gallery-thumb" /> : <div className="media-placeholder">未読み込み<br />{new URL(media.full).hostname}</div> : <img src={media.thumb} alt={`gallery-${media.postNo}`} className="gallery-thumb" />}
+            {remote ? consent ? media.thumb ? <RemoteImage url={media.thumb} alt={`post-${media.postNo}`} className="gallery-thumb" /> : <div className="media-placeholder">サムネイルなし<br />クリックで原寸画像を取得</div> : <div className="media-placeholder">未読み込み<br />{new URL(media.full).hostname}</div> : <img src={media.thumb} alt={`gallery-${media.postNo}`} className="gallery-thumb" />}
           </div>
-          <div className="gallery-meta"><label><input type="checkbox" aria-label={`画像 ${index + 1} を選択`} checked={selected.has(media.full)} onChange={e => setSelected(prev => { const next = new Set(prev); if (e.target.checked) next.add(media.full); else next.delete(media.full); return next; })} /> No.{media.postNo}</label><button className="ui-btn ui-btn--primary ui-btn--small" disabled={busy || (remote && !consent)} onClick={() => save([media])}>{source === "ptt" ? "この画像を保存" : "Save"}</button></div>
+          <div className="gallery-meta"><label><input type="checkbox" aria-label={`画像 ${index + 1} を選択`} checked={selected.has(media.full)} disabled={imageboard && !selected.has(media.full) && selectedCount >= IMAGEBOARD_SAVE_LIMIT} onChange={e => setSelected(prev => { const next = new Set(prev); if (e.target.checked) next.add(media.full); else next.delete(media.full); return next; })} /> No.{media.postNo}</label><button className="ui-btn ui-btn--primary ui-btn--small" disabled={busy || (remote && !consent)} onClick={() => save([media])}>{source === "ptt" ? "この画像を保存" : "Save"}</button></div>
           <button className="ui-btn m-2" onClick={() => jump(media.postId)}>元のレスへ</button>
         </div>)}</div>
         {!mediaList.length && <p className="empty-state">対応する画像を検出できませんでした。画像のない記事や、未対応の画像URLの場合があります。外部画像は許可ホストのHTTPS直リンクのみ対象です。</p>}

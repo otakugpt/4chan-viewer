@@ -35,10 +35,47 @@ let networkReads = 0;
 let publicReplyReads = 0;
 let externalPrompts = 0, allowExternal = false;
 let pttPrompts = 0, allowPtt = false;
+let lainPrompts = 0, allowLain = false;
+const imageboardReads = [], imageboardImageReads = [], unexpectedNetwork = [];
+const cancellableImageUrl = 'https://x.1145141919810.org/ayu/src/1792677185722.png';
+let delayedImageStarted = 0, delayedImageAborted = 0, releaseDelayedImage;
 let largeImageSize = 0, largeImagePrompts = 0, allowLargeImage = false, largeImageReads = 0;
 const pttCookies = [], pttFixture = require('./helpers/ptt-fixtures.cjs');
 const externalOpened = [];
 const fivePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB9sAAAAASUVORK5CYII=', 'base64');
+const imageboardFixtures = {
+  '2333chan': { board: 'ayu', thread: '123', title: '2333chan smoke fixture', body: '2333chan synthetic body',
+    list: 'https://x.1145141919810.org/ayu/catalog.json', url: 'https://x.1145141919810.org/ayu/res/123.html',
+    image: 'https://x.1145141919810.org/ayu/src/1792677185721.png', thumb: 'https://x.1145141919810.org/ayu/thumb/1792677185721.png' },
+  komica: { board: '00b', thread: '123', title: 'Komica smoke fixture', body: 'Komica synthetic body',
+    list: 'https://gaia.komica1.org/00b/index.htm', url: 'https://gaia.komica1.org/00b/pixmicat.php?res=123',
+    image: 'https://gita-pix.komica1.org/src/1792677185721.png', thumb: 'https://gita-pix.komica1.org/thumb/1792677185721s.png' },
+  lainchan: { board: 'lambda', thread: '123', title: 'Lain smoke fixture', body: 'Lain synthetic body',
+    list: 'https://www.lainchan.org/%CE%BB/catalog.json', url: 'https://www.lainchan.org/%CE%BB/res/123.html',
+    image: 'https://www.lainchan.org/%CE%BB/src/1792677185721.png', thumb: 'https://www.lainchan.org/%CE%BB/thumb/1792677185721.png' },
+};
+function imageboardFixture(url, headers) {
+  const source = Object.keys(imageboardFixtures).find(source => {
+    const f = imageboardFixtures[source];
+    return url === f.list || url === f.url || url === f.url.replace(/\.html$/, '.json') || url === f.image || url === f.thumb;
+  });
+  if (!source) return null;
+  assert.equal(headers.Authorization, undefined, 'Imageboards must not receive API credentials');
+  assert.equal(headers.Cookie, undefined, 'Imageboards must not receive age/session cookies');
+  const f = imageboardFixtures[source];
+  if (url === f.image || url === f.thumb) {
+    imageboardImageReads.push(url);
+    return { status: 200, headers: { 'content-type': 'image/png' }, body: fivePng };
+  }
+  imageboardReads.push(url);
+  if (source === 'komica') {
+    const html = `<div id="threads"><div class="thread" data-no="123"><div class="post threadpost" data-no="123" id="r123"><span class="title">${f.title}</span><span class="name">Synthetic author</span><span class="now">2026/10/23</span><a href="pixmicat.php?res=123">Reply</a><div class="quote">${f.body} &amp; safe text</div><div class="file-text"><a href="${f.image}"><img src="${f.thumb}" alt="fixture"></a></div></div><div class="post reply" data-no="124" id="r124"><div class="quote">Synthetic reply</div></div></div></div>`;
+    return { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: Buffer.from(html) };
+  }
+  const op = { no: 123, resto: 0, sub: f.title, com: `<p>${f.body} &amp; safe text</p>`, name: 'Synthetic author', time: 1792677185, replies: 1, tim: 1792677185721, ext: '.png', tn_w: 1, tn_h: 1, thumb_ext: '.png' };
+  const json = url === f.list ? [{ page: 1, threads: [op] }] : { posts: [op, { no: 124, resto: 123, com: 'Synthetic reply', time: 1792677186 }] };
+  return { status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify(json)) };
+}
 let dialogCalls = 0;
 let downloadCalls = 0;
 const downloadedUrls = [];
@@ -52,8 +89,21 @@ Module._load = function (name, ...args) {
   // Fixture requests have no rate impact. Production still uses the 6.1-second queue.
   if (name === './v2ex') { const real = originalLoad.call(this, name, ...args); return { ...real, createV2exService: snapshot => real.createV2exService(snapshot, { spacing: 0 }) }; }
   if (name === './ptt') { const real = originalLoad.call(this, name, ...args); return { ...real, createPttService: () => real.createPttService({ spacing: 0 }) }; }
-  if (name === './network') return { ...originalLoad.call(this, name, ...args), getBytes: async (url, limit, headers = {}) => {
+  if (name === './imageboards') { const real = originalLoad.call(this, name, ...args); return { ...real, createImageboardService: () => real.createImageboardService({ spacing: 0 }) }; }
+  if (name === './network') return { ...originalLoad.call(this, name, ...args), getBytes: async (url, limit, headers = {}, signal) => {
     networkReads++;
+    if (url === cancellableImageUrl) {
+      assert.deepEqual(headers, {});
+      delayedImageStarted++;
+      assert.ok(signal && typeof signal.addEventListener === 'function', 'Cancellable IPC must supply a transport AbortSignal');
+      return new Promise((resolve, reject) => {
+        const abort = () => { delayedImageAborted++; signal.removeEventListener('abort', abort); reject(new Error('Synthetic image request aborted')); };
+        releaseDelayedImage = () => { signal.removeEventListener('abort', abort); resolve({ status: 200, headers: { 'content-type': 'image/png' }, body: fivePng }); };
+        if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+      });
+    }
+    const fixture = imageboardFixture(url, headers);
+    if (fixture) return fixture;
     if (url.startsWith('https://www.ptt.cc/')) {
       assert.equal(headers.Authorization, undefined); pttCookies.push(headers.Cookie);
       if (url.endsWith('/bbs/index.html')) return pttFixture.response(pttFixture.boards);
@@ -100,11 +150,12 @@ Module._load = function (name, ...args) {
       }
       return { status: 200, headers: { 'content-type': 'image/png' }, body: fivePng };
     }
-    throw new Error('Unexpected fixture URL');
+    unexpectedNetwork.push(url);
+    throw new Error('Unexpected fixture URL: ' + url);
   } };
 
   if (name === './services') return { ...originalLoad.call(this, name, ...args), downloadImage: async url => { downloadedUrls.push(url); downloadCalls++; if (downloadCalls <= 3) throw new Error('Fixture download failure'); } };
-  return name === 'electron' ? { ...electron, BrowserWindow: HiddenWindow, shell: { openExternal: async url => { externalOpened.push(url); } }, dialog: { showMessageBox: async options => { if (options.title === '大きい画像の取得確認') { largeImagePrompts++; assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0); assert.ok(options.detail.includes('100MB')); assert.ok(options.detail.includes('i.urusai.cc')); return { response: allowLargeImage ? 1 : 0 }; } if (options.message === '18歳以上であることを確認してください') { pttPrompts++; assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0); return { response: allowPtt ? 1 : 0 }; } assert.equal(options.message, "外部サイトへ遷移します"); externalPrompts++; return { response: allowExternal ? 1 : 0 }; }, showOpenDialog: async () => { dialogCalls++; await new Promise(r => setTimeout(r, 100)); return { canceled: cancelSave, filePaths: cancelSave ? [] : [process.env.SMOKE_USER_DATA] }; } } } : originalLoad.call(this, name, ...args);
+  return name === 'electron' ? { ...electron, BrowserWindow: HiddenWindow, shell: { openExternal: async url => { externalOpened.push(url); } }, dialog: { showMessageBox: async options => { if (options.title === 'Lainchanの閲覧確認') { lainPrompts++; assert.equal(options.message, 'Lainchanは18歳以上の方のみ閲覧できます'); assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0); return { response: allowLain ? 1 : 0 }; } if (options.title === '大きい画像の取得確認') { largeImagePrompts++; assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0); assert.ok(options.detail.includes('100MB')); assert.ok(options.detail.includes('i.urusai.cc')); return { response: allowLargeImage ? 1 : 0 }; } if (options.message === '18歳以上であることを確認してください') { pttPrompts++; assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0); return { response: allowPtt ? 1 : 0 }; } assert.equal(options.message, "外部サイトへ遷移します"); externalPrompts++; return { response: allowExternal ? 1 : 0 }; }, showOpenDialog: async () => { dialogCalls++; await new Promise(r => setTimeout(r, 100)); return { canceled: cancelSave, filePaths: cancelSave ? [] : [process.env.SMOKE_USER_DATA] }; } } } : originalLoad.call(this, name, ...args);
 };
 const timeout = setTimeout(() => { console.error('Smoke test timed out'); app.exit(1); }, 90000);
 app.whenReady().then(() => {
@@ -112,6 +163,8 @@ app.whenReady().then(() => {
     networkReads++;
     const url = new URL(request.url);
     const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
+    if (url.href === 'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap')
+      return new Response('', { headers: { 'Content-Type': 'text/css' } });
     if (url.hostname === 'a.4cdn.org') {
       if (url.pathname === '/boards.json') return new Response(JSON.stringify({ boards: [{ board: 'g', title: 'Technology' }, { board: 'a', title: 'Animation' }] }), { headers });
       const board = url.pathname.split('/')[1];
@@ -124,6 +177,7 @@ app.whenReady().then(() => {
       return new Response(JSON.stringify({ posts: Array.from({ length: 16 }, (_, i) => ({ no: no + i, com: i === 0 ? 'hello https://example.test/thread?x=1&amp;y=2 https://egg.5ch.net/test/read.cgi/software/1608930976/' : 'A &amp; B<br>Read position fixture ' + i, tim: no + i, ext: '.jpg' })) }), { headers });
     }
     if (url.hostname === 'i.4cdn.org') return new Response('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#17394a"/><circle cx="320" cy="240" r="100" fill="#62ddff"/></svg>', { headers: { 'Content-Type': 'image/svg+xml' } });
+    unexpectedNetwork.push(request.url);
     return new Response('', { status: 404 });
   });
   app.once('browser-window-created', (_event, win) => {
@@ -181,9 +235,9 @@ app.whenReady().then(() => {
           const pane = document.querySelector('.post-card').parentElement;
           pane.scrollTop = 900;
           pane.dispatchEvent(new Event('scroll'));
-          await new Promise(r => setTimeout(r, 350));
+          await waitFor(() => JSON.parse(localStorage.getItem('rift.library.v3')).sites['4chan'].reads['a/200']?.scroll >= 800);
           const data = JSON.parse(localStorage.getItem('rift.library.v3')).sites['4chan'];
-          if (data.reads['a/200'].scroll < 800 || !data.threads.includes('a/200')) throw new Error('Reading persistence');
+          if (data.reads['a/200'].scroll < 800 || !data.threads.includes('a/200')) throw new Error('Reading persistence: ' + JSON.stringify({ read: data.reads['a/200'], threads: data.threads, scroll: pane.scrollTop, height: pane.clientHeight, contentHeight: pane.scrollHeight }));
         })()`);
         assert.equal(dialogCalls, 1);
         cancelSave = false;
@@ -944,6 +998,226 @@ app.whenReady().then(() => {
           if (JSON.parse(localStorage.getItem('rift.library.v3')).sites.ptt.metadata['Beauty/${pttFixture.id}']) throw new Error('Gated title entered history');
         })()`);
         console.log('PASS: PTT compact guide, validated direct board entry, popular boards, older pages, Chinese body/reactions, favorites, internal links, offline save, native age confirmation/cancel/revoke and no gated content leak');
+        win.setSize(1400, 900);
+        const assertLainBlocked = async phase => {
+          const before = networkReads, prompts = lainPrompts;
+          const f = imageboardFixtures.lainchan;
+          const requests = [
+            { source: 'lainchan', kind: 'boards' },
+            { source: 'lainchan', kind: 'threads', board: f.board },
+            { source: 'lainchan', kind: 'posts', board: f.board, thread: f.thread },
+            { source: 'lainchan', kind: 'resolve', url: f.url },
+          ];
+          for (const request of requests) {
+            const result = await run(`window.electron.imageboardRequest(${JSON.stringify(request)})`);
+            assert.ok(result.error || result.status === 'age-confirmation-required', phase + ': direct ' + request.kind + ' must be blocked');
+            for (const key of ['boards', 'threads', 'posts', 'board']) assert.equal(result[key], undefined);
+          }
+          for (const url of [f.thumb, f.image]) {
+            const image = await run(`window.electron.fiveImage(${JSON.stringify(url)})`);
+            assert.ok(image.error, phase + ': direct media must be blocked, including cached bytes');
+            assert.equal(image.bytes, undefined);
+            const cancellable = await run(`window.electron.imageboardImage({ id: crypto.randomUUID(), url: ${JSON.stringify(url)} })`);
+            assert.ok(cancellable.error, phase + ': cancellable image IPC must enforce the same age gate');
+            assert.equal(cancellable.bytes, undefined);
+          }
+          cancelSave = false;
+          const filesBefore = fs.readdirSync(process.env.SMOKE_USER_DATA).filter(file => /\.png$/.test(file));
+          const save = await run(`window.electron.saveImages([{ source: 'lainchan', url: ${JSON.stringify(f.image)} }])`);
+          assert.equal(save.saved, 0, phase + ': direct image save must be blocked');
+          assert.deepEqual(fs.readdirSync(process.env.SMOKE_USER_DATA).filter(file => /\.png$/.test(file)), filesBefore);
+          assert.equal(networkReads, before, phase + ': gated IPC must not contact any host');
+          assert.equal(lainPrompts, prompts, phase + ': reading must not implicitly open an age prompt');
+        };
+        assert.deepEqual(await run(`window.electron.imageboardConsent({ action: 'status', accepted: true })`), { accepted: false });
+        await assertLainBlocked('Before native confirmation');
+        const beforeLainNavigation = networkReads;
+        await run(`(async () => {
+          document.querySelector('[data-source="lainchan"]').click();
+          await waitFor(() => document.querySelector('.ptt-age-notice')?.textContent.includes('Lainchan'));
+          if (document.querySelector('.board-item') || document.querySelector('.thread-card')) throw new Error('Lain listing exposed before confirmation');
+          window.confirm = () => true;
+          clickText('18歳以上・利用条件の確認を開く');
+          // A consent revision can remount the notice; verify access rather than transient local text.
+          await new Promise(r => setTimeout(r, 75));
+          await waitFor(() => document.querySelector('.ptt-age-notice button:not(:disabled)'));
+          if ((await window.electron.imageboardConsent({ action: 'status' })).accepted) throw new Error('Renderer confirmation bypassed native cancellation');
+          if (document.querySelector('.board-item') || document.querySelector('.thread-card') || document.querySelector('.post-card')) throw new Error('Cancelled Lain confirmation exposed content');
+        })()`);
+        assert.equal(lainPrompts, 1);
+        assert.equal(networkReads, beforeLainNavigation, 'Lain navigation/native cancellation must not fetch');
+
+        const exerciseImageboard = async source => {
+          const f = imageboardFixtures[source], beforeImages = imageboardImageReads.length;
+          const beforeTranslations = translatedTexts.length;
+          await run(`(async () => {
+            const f = ${JSON.stringify(f)};
+            document.querySelector('[data-source="${source}"]').click();
+            await waitFor(() => [...document.querySelectorAll('.board-item')].some(b => b.textContent.includes('/' + f.board + '/')));
+            const board = [...document.querySelectorAll('.board-item')].find(b => b.textContent.includes('/' + f.board + '/'));
+            board.parentElement.querySelector('.favorite-board').click();
+            board.click();
+            await waitFor(() => document.querySelector('.thread-card')?.textContent.includes(f.title));
+            document.querySelector('.thread-card button').click();
+            document.querySelector('.thread-card').click();
+            await waitFor(() => document.querySelectorAll('.post-card').length === 2 && document.querySelector('.post-body')?.textContent.includes(f.body));
+            if (document.querySelector('.post-body img') || document.querySelector('.translate-block')) throw new Error('Unexpected embedded image or unsupported translation');
+            const library = JSON.parse(localStorage.getItem('rift.library.v3')).sites['${source}'];
+            if (!library.boards.includes(f.board) || !library.threads.includes(f.board + '/' + f.thread)) throw new Error('Imageboard favorites not persisted separately');
+            clickText('本文を保存');
+            await waitFor(() => document.body.textContent.includes('本文を保存しました'));
+            clickText('Gallery');
+            await waitFor(() => document.querySelector('.media-placeholder'));
+            if (document.querySelector('.gallery-thumb')) throw new Error('Automatic imageboard image request');
+            window.confirm = () => false;
+            clickText('画像を読み込む');
+            await new Promise(r => setTimeout(r, 75));
+            if (document.querySelector('.gallery-thumb')) throw new Error('Imageboard image cancellation ignored');
+          })()`);
+          assert.equal(imageboardImageReads.length, beforeImages, source + ': no images before explicit consent');
+          assert.equal(translatedTexts.length, beforeTranslations);
+          cancelSave = false;
+          const savesBefore = dialogCalls;
+          const filesBefore = fs.readdirSync(process.env.SMOKE_USER_DATA).filter(file => /\.png$/.test(file));
+          await run(`(async () => {
+            window.confirm = () => true;
+            clickText('画像を読み込む');
+            await waitFor(() => document.querySelector('.gallery-thumb')?.src.startsWith('blob:'));
+          })()`);
+          assert.deepEqual(imageboardImageReads.slice(beforeImages), [f.thumb], source + ': gallery must fetch only the thumbnail');
+          if (source === '2333chan') {
+            win.setSize(1401, 901); await new Promise(r => setTimeout(r, 100));
+            win.setSize(1400, 900); await new Promise(r => setTimeout(r, 250));
+            await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+            await new Promise(r => setTimeout(r, 1000));
+            fs.writeFileSync(path.join(outputDir, 'imageboards-smoke.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+          }
+          await run(`(async () => {
+            document.querySelector('.gallery-link').click();
+            await waitFor(() => document.querySelector('.media-viewer img')?.src.startsWith('blob:'));
+            document.querySelector('.viewer-save').click();
+            await waitFor(() => document.querySelector('.viewer-save').disabled);
+            await waitFor(() => !document.querySelector('.viewer-save').disabled && document.querySelector('.viewer-save-status')?.textContent.includes('保存完了: 1/1'));
+            clickText('閉じる (Esc)');
+            clickText('画像の表示を停止');
+            await waitFor(() => !document.querySelector('.gallery-thumb'));
+            clickText('Thread');
+            await waitFor(() => document.querySelector('.post-body'));
+          })()`);
+          assert.equal(dialogCalls, savesBefore + 1);
+          const newFiles = fs.readdirSync(process.env.SMOKE_USER_DATA).filter(file => /\.png$/.test(file) && !filesBefore.includes(file));
+          assert.equal(newFiles.length, 1, source + ': viewer must write exactly one image');
+          assert.deepEqual(fs.readFileSync(path.join(process.env.SMOKE_USER_DATA, newFiles[0])), fivePng);
+          assert.ok(imageboardImageReads.slice(beforeImages).includes(f.image), source + ': fixed-host media route not exercised');
+          const resolved = await run(`window.electron.imageboardRequest({ source: '${source}', kind: 'resolve', url: ${JSON.stringify(f.url)} })`);
+          assert.deepEqual(resolved, { source, board: f.board, thread: f.thread });
+          await run(`(async () => {
+            const f = ${JSON.stringify(f)};
+            const input = document.querySelector('.url-bar input');
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, f.url);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 50));
+            document.querySelector('.url-bar').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+            await new Promise(r => setTimeout(r, 50));
+            await waitFor(() => !document.querySelector('.url-bar button').disabled);
+            if (document.querySelector('.url-bar [role="alert"]')) throw new Error('Imageboard URL import failed');
+            document.querySelectorAll('.library-nav-item')[0].click();
+            await waitFor(() => [...document.querySelectorAll('.saved-thread-open')].some(b => b.textContent.includes(f.title)));
+            const tabs = document.querySelectorAll('.reader-tab').length;
+            [...document.querySelectorAll('.saved-thread-open')].find(b => b.textContent.includes(f.title)).click();
+            await waitFor(() => document.querySelector('.post-body')?.textContent.includes(f.body));
+            if (document.querySelectorAll('.reader-tab').length !== tabs) throw new Error('Favorite duplicated imageboard tab');
+            document.querySelectorAll('.library-nav-item')[2].click();
+            await waitFor(() => [...document.querySelectorAll('.saved-thread-open')].some(b => b.textContent.includes(f.title)));
+          })()`);
+          const beforeOffline = networkReads;
+          await run(`(async () => {
+            const f = ${JSON.stringify(f)};
+            [...document.querySelectorAll('.saved-thread-open')].find(b => b.textContent.includes(f.title)).click();
+            await waitFor(() => document.querySelector('.offline-thread')?.textContent.includes(f.body));
+            if (document.querySelector('.offline-thread img') || document.querySelector('.offline-thread .translate-block')) throw new Error('Offline imageboard initiated remote content');
+          })()`);
+          assert.equal(networkReads, beforeOffline, source + ': saved thread must remain offline');
+          console.log('PASS: ' + source + ' boards/catalog/posts, favorites, resolve, consent-only blob gallery/viewer/save, and offline saved thread');
+        };
+        await exerciseImageboard('2333chan');
+        await exerciseImageboard('komica');
+        allowLain = true;
+        await run(`(async () => {
+          document.querySelector('[data-source="lainchan"]').click();
+          await waitFor(() => document.querySelector('.ptt-age-notice')?.textContent.includes('Lainchan'));
+          clickText('18歳以上・利用条件の確認を開く');
+          await waitFor(() => document.querySelector('.board-item'));
+          if (!(await window.electron.imageboardConsent({ action: 'status' })).accepted) throw new Error('Native Lain confirmation missing');
+        })()`);
+        assert.equal(lainPrompts, 2);
+        await exerciseImageboard('lainchan');
+        await run(`(async () => {
+          clickText('通常の閲覧に戻る');
+          await waitFor(() => !document.querySelector('.offline-thread') && document.querySelector('.image-consent'));
+          clickText('画像を読み込む');
+          await waitFor(() => document.querySelector('.gallery-thumb')?.src.startsWith('blob:'));
+          document.querySelector('.gallery-link').click();
+          await waitFor(() => document.querySelector('.media-viewer img')?.src.startsWith('blob:'));
+          clickText('Lainchan同意を解除');
+          await waitFor(() => !document.querySelector('.media-viewer') && !document.querySelector('.gallery-thumb'));
+        })()`);
+        await assertLainBlocked('After revoking an open image viewer');
+        await run(`(async () => {
+          clickText('18歳以上・利用条件の確認を開く');
+          await waitFor(() => document.querySelector('.board-item'));
+          const savedNav = document.querySelectorAll('.library-nav-item')[2];
+          if (savedNav.getAttribute('aria-pressed') !== 'true') savedNav.click();
+          await waitFor(() => [...document.querySelectorAll('.saved-thread-open')].some(b => !b.disabled && b.textContent.includes('Lain smoke fixture')));
+          [...document.querySelectorAll('.saved-thread-open')].find(b => b.textContent.includes('Lain smoke fixture')).click();
+          await waitFor(() => document.querySelector('.offline-thread')?.textContent.includes('Lain synthetic body'));
+        })()`);
+        assert.equal(lainPrompts, 3);
+        const beforeRevoke = networkReads;
+        allowLain = false;
+        await run(`(async () => {
+          clickText('Lainchan同意を解除');
+          await waitFor(() => !document.querySelector('.offline-thread') && document.querySelector('.ptt-age-notice'));
+          if ((await window.electron.imageboardConsent({ action: 'status' })).accepted) throw new Error('Lain revocation did not reach main process');
+          if (document.querySelector('.media-viewer') || document.querySelector('.gallery-thumb') || document.body.textContent.includes('Lain smoke fixture') || document.body.textContent.includes('Lain synthetic body')) throw new Error('Revoked Lain body/title/media still exposed');
+          for (const index of [0, 1, 2]) {
+            document.querySelectorAll('.library-nav-item')[index].click();
+            await new Promise(r => setTimeout(r, 75));
+            if (document.body.textContent.includes('Lain smoke fixture') || document.body.textContent.includes('Lain synthetic body')) throw new Error('Library leaked revoked Lain title/body');
+          }
+        })()`);
+        assert.equal(networkReads, beforeRevoke, 'Revocation and gated library views must not fetch');
+        await assertLainBlocked('After revocation with populated caches');
+        const beforeInvalid = networkReads, dialogsBeforeInvalid = dialogCalls;
+        for (const target of [
+          { source: 'komica', url: imageboardFixtures.lainchan.image },
+          { source: 'lainchan', url: imageboardFixtures.komica.image },
+          { source: '2333chan', url: imageboardFixtures.komica.image },
+          { source: 'komica', url: 'https://evil.test/fixture.png' },
+        ]) {
+          const result = await run(`window.electron.saveImages([${JSON.stringify(target)}])`);
+          assert.equal(result.status, 'error'); assert.equal(result.saved, 0);
+        }
+        assert.equal(dialogCalls, dialogsBeforeInvalid, 'Invalid source/host combinations must fail before folder selection');
+        assert.equal(networkReads, beforeInvalid);
+        assert.equal(lainPrompts, 3, 'No request may implicitly grant or prompt for age consent');
+        const beforeCancellation = networkReads;
+        try {
+          await run(`window.smokeImageId = crypto.randomUUID(); window.smokeImagePending = window.electron.imageboardImage({ id: window.smokeImageId, url: ${JSON.stringify(cancellableImageUrl)} }); true;`);
+          const deadline = Date.now() + 3000;
+          while (!delayedImageStarted && Date.now() < deadline) await new Promise(r => setTimeout(r, 25));
+          assert.equal(delayedImageStarted, 1, 'Delayed image must reach the synthetic transport');
+          await run('window.electron.cancelImageboardImage(window.smokeImageId)');
+          const cancelled = await run(`Promise.race([window.smokeImagePending, new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 3000))])`);
+          assert.equal(cancelled.timeout, undefined, 'Cancelled IPC must settle promptly');
+          assert.ok(cancelled.error, 'Cancelled IPC must return an error instead of image bytes');
+          assert.equal(cancelled.bytes, undefined);
+          assert.equal(delayedImageAborted, 1, 'Cancellation must abort the transport, not just hide the result');
+          assert.equal(networkReads, beforeCancellation + 1, 'Cancellation must not retry or request another image');
+        } finally { releaseDelayedImage?.(); }
+        assert.deepEqual(unexpectedNetwork, [], 'Every network request must match a synthetic fixture');
+        console.log('PASS: Lain native cancellation/accept/revoke, gated lists/favorites/saved bodies, direct IPC and cached-media denial, and image source allowlist');
+        console.log('PASS: cancellable image IPC aborts an in-flight synthetic transport and returns no bytes');
         clearTimeout(timeout);
         app.exit(0);
       } catch (error) { console.error(error); app.exit(1); }
